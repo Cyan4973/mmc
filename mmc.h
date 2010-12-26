@@ -22,34 +22,43 @@
 // Basic Types
 //************************************************************
 #define BYTE unsigned char
+#define U16  unsigned short
 #define U32  unsigned long
 
 
 //************************************************************
 // Constants
 //************************************************************
-#define MINMATCH 4		// Note : for the time being, this cannot be changed
+#define MINMATCH 4					// Note : for the time being, this cannot be changed
+#define DICTIONARY_LOGSIZE 16		// Dictionary Size as a power of 2
 
 
 //************************************************************
 // Creation & Destruction
 //************************************************************
-void* MMC_Create (U32 dicSize);
+
+void* MMC_Create (BYTE* beginBuffer, BYTE* endBuffer);
+U32 MMC_Init (void* MMC_Data, BYTE* beginBuffer, BYTE* endBuffer);
 U32 MMC_Free (void** MMC_Data);
 
 /*
-MMC_Create : dicSize : size of sliding window, in Bytes
+MMC_Create : note that dictionary Size is a compilation directive !
+			BYTE* startBuffer, BYTE* endBuffer : first and last+1 byte of data buffer being searched
 			return : Pointer to MMC Data Structure; NULL = error
+MMC_Init : reset MMC_Data; 
+			MMC_Init is automatically called within MMC_Create, so this is only useful on later initialization;
+			return : 0 = error; 1 = OK;
 MMC_Free : free memory from MMC Data Structure; pointer MMC_Data should be valid; 
-			return : 0 = OK; 1+ = error;
+			return : 0 = error, 1+ = Nb of bytes free;
 */
 
 //************************************************************
 // Basic Search operations (Greedy / Lazy / Flexible parsing)
 //************************************************************
-U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* p, BYTE** r);
-U32 MMC_Insert1 (void* MMC_Data, BYTE* p);
-U32 MMC_InsertMany (void* MMC_Data, BYTE* p, U32 length);
+
+U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r);
+U32 MMC_Insert1 (void* MMC_Data, BYTE* ip);
+U32 MMC_InsertMany (void* MMC_Data, BYTE* ip, U32 length);
 
 /*
 MMC_InsertAndFindBestMatch :
@@ -57,15 +66,17 @@ MMC_InsertAndFindBestMatch :
 	return : length of Best Match (which is >= MINMATCH)
 			if return == 0, no match was found
 			if return > 0, then match position is into r
-MMC_Insert1 & MMC_InsertMany :
-		return : 0 = OK; 1+ = error;
+MMC_InsertMany :
+		return : 0 = error; 1+ = Nb of bytes inserted;
+MMC_Insert1 :
+		return : 0 = error; 1+ = Nb of bytes inserted;
 */
 
 //************************************************************
 // Advanced Search operations (Optimal parsing)
 //************************************************************
 
-U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* p, BYTE** r);
+U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* ip, BYTE** r);
 U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** r);
 
 /*
