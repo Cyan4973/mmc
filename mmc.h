@@ -76,8 +76,12 @@ MMC_Insert1 :
 // Advanced Search operations (Optimal parsing)
 //************************************************************
 
+/*
+Not completed (yet)
+
 U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* ip, BYTE** r);
 U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** r);
+*/
 
 /*
 MMC_InsertAndFindFirstMatch :
