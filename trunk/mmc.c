@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #define ALLOCATOR malloc
 #define FREEMEM free
+#include <string.h>
+#define MEM_INIT memset
 
 
 //************************************************************
@@ -46,6 +48,8 @@
 #define MAXD (1U<<DICTIONARY_LOGSIZE)
 #define MAXD_MASK (MAXD - 1)
 #define MAX_DISTANCE (MAXD - 1)
+
+#define LEVEL_DOWN ((BYTE*)1)
 
 
 //************************************************************
@@ -77,6 +81,8 @@ struct MMC_Data_Structure
 	struct selectNextHop chainTable[MAXD];
 	struct segmentTracker segments[NBCHARACTERS];
 	BYTE* levelList[MAX_LEVELS];
+	BYTE** trackPtr[NBCHARACTERS];
+	U16 trackStep[NBCHARACTERS];
 };
 
 
@@ -110,9 +116,9 @@ U32 MMC_Init (void* MMC_Data, BYTE* beginBuffer, BYTE* endBuffer)
 
 	MMC->beginBuffer = beginBuffer;
 	MMC->endBuffer = endBuffer;
-	memset(MMC->hashTable, 0, sizeof(MMC->hashTable));
-	memset(MMC->chainTable, 0, sizeof(MMC->chainTable));
-	memset(MMC->segments, 0, sizeof(MMC->segments)); { U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = beginBuffer-(MAX_DISTANCE+1); } }
+	MEM_INIT(MMC->hashTable, 0, sizeof(MMC->hashTable));
+	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
+	MEM_INIT(MMC->segments, 0, sizeof(MMC->segments)); { U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = beginBuffer-(MAX_DISTANCE+1); } }
 
 	return 1;
 }
@@ -132,17 +138,21 @@ U32 MMC_Free (void** MMC_Data)
 U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
-	BYTE* iend = MMC->endBuffer;
 	struct segmentTracker * Segments = MMC->segments;
 	struct selectNextHop * chainTable = MMC->chainTable;
+	BYTE*** trackPtr = MMC->trackPtr;
 	BYTE** levelList = MMC->levelList;
 	BYTE** HashTable = MMC->hashTable;
-	BYTE* ref;
+	BYTE*  iend = MMC->endBuffer;
+	U16*   trackStep = MMC->trackStep;
+	BYTE*  ref;
 	BYTE** gateway;
+	BYTE*  currentP;
+	U16	stepNb=0;
 	U32 currentLevel, maxLevel;
-	U32 matchLength, mlt, nbChars, sequence;
+	U32 ml, mlt, nbChars, sequence;
 
-	matchLength = mlt = nbChars = 0;
+	ml = mlt = nbChars = 0;
 	sequence = *(U32*)ip;
 
 	// Special Stream match finder
@@ -153,34 +163,25 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		U32 index = Segments[c].start;
 		BYTE* endSegment = ip+4;
 
-		while ((*endSegment==c) && (endSegment<iend)) endSegment++; 
-		nbChars = endSegment-ip;
+		while ((*endSegment==c) && (endSegment<iend)) endSegment++; nbChars = endSegment-ip;
 
 		while (Segments[c].segments[index].size < nbChars) index--;
 
 		if ((Segments[c].segments[index].position - nbChars) <= (ip - MAX_DISTANCE))      // no large enough previous serie within range
 		{
-			NEXT_TRY(ip) = LEVEL_UP(ip) = 0;    // no "previous" segment within range
-			if (*(ip-1)==c)				// obvious RLE solution
+			// no "previous" segment within range
+			NEXT_TRY(ip) = LEVEL_UP(ip) = 0;    
+			if (nbChars==MINMATCH) MMC_Insert1(MMC, ip);
+			if (*(ip-1)==c)         // obvious RLE solution
 			{
-				*r = ip-1;
-				matchLength = nbChars;
-				return matchLength;
+				*r=ip-1;
+				return nbChars;
 			}
-			if (nbChars==MINMATCH)  	// isolated cccc sequence
-			{
-				Segments[c].start = 1;
-				Segments[c].segments[1].position = ip + MINMATCH;
-				Segments[c].segments[1].size = MINMATCH;
-				return 0;
-			}
-			// No solution at position ip
-			// but there will be one at ip+1
 			return 0;
 		}
 
 		ref = NEXT_TRY(ip)= Segments[c].segments[index].position - nbChars;
-		currentLevel = maxLevel = matchLength = nbChars;
+		currentLevel = maxLevel = ml = nbChars;
 		LEVEL(currentLevel) = ip;
 		gateway = 0; // work around due to erasing
 		LEVEL_UP(ip) = 0;
@@ -193,22 +194,20 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		goto _FindBetterMatch;
 	}
 
-
 	// MMC Sequence match finder
 	ref=HashTable[HASH_FUNCTION(sequence)];
 	ADD_HASH(ip);
 	if (!ref) return 0;
 	gateway = &LEVEL_UP(ip);
 	currentLevel = maxLevel = MINMATCH-1;
-	LEVEL(currentLevel) = ip;
+	LEVEL(MINMATCH-1) = ip;
 
 	// Collision detection & avoidance
 	while ((ref) && ((ip-ref) < MAX_DISTANCE))
 	{
-
 		if (*(U32*)ref != sequence)
 		{
-			LEVEL(currentLevel) = ref; 
+			LEVEL(MINMATCH-1) = ref; 
 			ref = NEXT_TRY(ref);
 			continue;
 		}
@@ -216,68 +215,65 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		mlt = MINMATCH;
 		while (*(ip+mlt) == *(ref+mlt)) mlt++;
 
-		if (mlt>matchLength)
+		if (mlt>ml)
 		{
-			matchLength = mlt; 
+			ml = mlt; 
 			*r = ref; 
 		}
 
-_place_into_base_chain:
+		// Continue level mlt chain
 		if (mlt<=maxLevel)
 		{
-			BYTE* currentP = ref;
 			NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;		// Completing chain at Level mlt
-			NEXT_TRY(LEVEL(MINMATCH-1)) = NEXT_TRY(ref);		// Extraction from base level
-			if (LEVEL_UP(ref))
-			{
-				ref=LEVEL_UP(ref);
-				NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;	// Clean, because extracted
-				currentLevel++;
-				NEXT_TRY(LEVEL(MINMATCH)) = ref;
-				break;
-			}
-			ref=NEXT_TRY(ref);
-			NEXT_TRY(currentP) = 0;								// initialisation, due to promotion; note that LEVEL_UP(ref)=0;
-			continue;
 		}
 
 		// New level creation
-		if (gateway)
+		else 
 		{
-			BYTE* currentP = ref;
-			maxLevel++;
-			*gateway = ref;
-			LEVEL(maxLevel)=ref;								// First element of level max 
-			if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
-			NEXT_TRY(LEVEL(MINMATCH-1)) = NEXT_TRY(ref);		// Extraction from base level
-			if (LEVEL_UP(ref))
-			{ 
-				ref=LEVEL_UP(ref);
-				NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;    // initialisation, due to promotion 
-				currentLevel++;
-				NEXT_TRY(LEVEL(MINMATCH)) = ref;				// dont know position of new ref yet, but it is at least MINMATCH; linking in case it would only MINMATCH
-				break;
-			} 
-			ref=NEXT_TRY(ref);
-			NEXT_TRY(currentP) = 0;								// initialisation, due to promotion; note that LEVEL_UP(ref)=0;
-			continue;
+			if (gateway)			// Only guaranteed the first time (gateway is ip)
+			{
+				maxLevel++;
+				*gateway = ref;
+				LEVEL(maxLevel)=ref;								// First element of level maxLevel
+				if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
+			}
+
+			// Special case : no gateway, but mlt>maxLevel
+			else
+			{
+				gateway = &(LEVEL_UP(ref));
+				NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;		// Completing chain at Level maxLevel
+			}
 		}
 
-		// Special case : no gateway, but mlt>maxLevel
+		currentP = ref;
+		NEXT_TRY(LEVEL(MINMATCH-1)) = NEXT_TRY(ref);		// Extraction from base level
+		if (LEVEL_UP(ref))
 		{
-			gateway = &(LEVEL_UP(ref));
-			mlt = maxLevel;
-			goto _place_into_base_chain;
+			ref=LEVEL_UP(ref);
+			NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;	// Clean, because extracted
+			currentLevel++;
+			NEXT_TRY(LEVEL(MINMATCH)) = ref;
+			break;
 		}
+		ref=NEXT_TRY(ref);
+		NEXT_TRY(currentP) = 0;								// initialisation, due to promotion; note that LEVEL_UP(ref)=0;
 	}
-	
-	if (!matchLength) return 0;  // no match found
+
+	if (ml==0) return 0;  // no match found
 
 
 	// looking for further length of matches
 _FindBetterMatch:
 	while ((ref) && ((ip-ref) < MAX_DISTANCE))
 	{
+		// Reset rolling counter for Secondary Promotions
+		if (!stepNb)
+		{
+			U32 i;
+			for (i=0; i<NBCHARACTERS; i++) trackStep[i]=0;
+			stepNb=1;
+		}
 
 		mlt = currentLevel;
 		while (*(ip+mlt) == *(ref+mlt)) mlt++;
@@ -285,102 +281,146 @@ _FindBetterMatch:
 		// First case : No improvement => continue on current chain
 		if (mlt==currentLevel)
 		{
+			BYTE c = *(ref+currentLevel);
+			if (trackStep[c] == stepNb)									// this wrong character was already met before
+			{
+				BYTE* next = NEXT_TRY(ref);
+				*trackPtr[c] = ref;										// linking
+				NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);			// extraction
+				if (LEVEL_UP(ref))
+				{
+					NEXT_TRY(ref) = LEVEL_UP(ref);						// Promotion
+					LEVEL_UP(ref) = 0;
+					trackStep[c] = 0;									// Shutdown chain (avoid overwriting when multiple unfinished chains)
+				}
+				else
+				{
+					NEXT_TRY(ref) = LEVEL_DOWN;							// Promotion, but link back to previous level for now
+					trackPtr[c] = &(NEXT_TRY(ref));						// saving for next link
+				}
+
+				if (next==LEVEL_DOWN)
+				{
+					NEXT_TRY(LEVEL(currentLevel)) = 0;					// Erase the LEVEL_DOWN
+					currentLevel--; stepNb++;
+					next = NEXT_TRY(LEVEL(currentLevel));	
+					while (next > ref) { LEVEL(currentLevel) = next; next = NEXT_TRY(next); }
+				}
+				ref = next;					
+
+				continue;
+			}
+
+			// first time we see this character
+			if (LEVEL_UP(ref)==0)   // don't interfere if a serie has already started... 
+				// Note : to "catch up" the serie, it would be necessary to scan it, up to its last element
+				// this effort would be useless if the chain is complete
+				// Alternatively : we could keep that gateway in memory, and scan the chain on finding that it is not complete.
+				// But would it be worth it ??
+			{
+				trackStep[c] = stepNb;
+				trackPtr[c] = &(LEVEL_UP(ref)); 
+			}
+
+_continue_same_level:
 			LEVEL(currentLevel) = ref; 
-			ref = NEXT_TRY(ref);
+			ref = NEXT_TRY(ref);												
+			if (ref == LEVEL_DOWN)
+			{
+				BYTE* currentP = LEVEL(currentLevel);
+				BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
+				NEXT_TRY(currentP) = 0;							// Erase the LEVEL_DOWN
+				while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next);}
+				ref = next;
+				currentLevel--; stepNb++;
+			}
 			continue;
 		}
 
 		// Now, mlt > currentLevel
-		if (mlt>matchLength)
+		if (mlt>ml)
 		{
-			matchLength = mlt; 
+			ml = mlt; 
 			*r = ref; 
 		}
 
-
-_place_into_chain:
 		// placing into corresponding chain
 		if (mlt<=maxLevel)
 		{
-			BYTE* currentP = ref;
 			NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;		// Completing chain at Level mlt
+_check_mmc_levelup:
+			currentP = ref;
 			NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);		// Extraction from base level
 			if (LEVEL_UP(ref)) 
 			{ 
-				ref=LEVEL_UP(ref); 
+				ref = LEVEL_UP(ref);							// LevelUp
 				NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;	// Clean, because extracted
-				currentLevel++; 
-				NEXT_TRY(LEVEL(currentLevel)) = ref;
+				currentLevel++; stepNb++;
+				NEXT_TRY(LEVEL(currentLevel)) = ref;			// We don't know yet ref's level, but just in case it would be only ==currentLevel...
 			} 
 			else 
 			{ 
-				ref=NEXT_TRY(ref); 
-				NEXT_TRY(currentP) = 0;							// initialisation, due to promotion; note that LEVEL_UP(ref)=0;
+				ref = NEXT_TRY(ref);
+				NEXT_TRY(currentP) = 0;							// promotion to level mlt; note that LEVEL_UP(ref)=0;
+				if (ref == LEVEL_DOWN)
+				{
+					BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
+					NEXT_TRY(LEVEL(currentLevel)) = 0;			// Erase the LEVEL_DOWN (which has been transfered)
+					while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next); }
+					ref = next;
+					currentLevel--; stepNb++;
+				}
 			}
 			continue;
 		}
 
-		// New level creation, with maxLevel > currentLevel
+		// MaxLevel increase
 		if (gateway)
 		{
-			BYTE* currentP = ref;
-			maxLevel++;
 			*gateway = ref;
+			maxLevel++;
+			LEVEL(maxLevel) = ref;								// First element of level max 
 			if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
-			LEVEL(maxLevel)=ref;								// First element of level max > current+1
-			NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);		// Extraction from base level
-			if (LEVEL_UP(ref)) 
-			{ 
-				ref=LEVEL_UP(ref); 
-				NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;    // initialisation, due to promotion 
-				currentLevel++; 
-				NEXT_TRY(LEVEL(currentLevel)) = ref;
-			} 
-			else 
-			{ 
-				ref=NEXT_TRY(ref); 
-				NEXT_TRY(currentP) = 0;							// initialisation, due to promotion; note that LEVEL_UP(ref)=0;
-			}
-			continue;
+			goto _check_mmc_levelup;
 		}
 
-		// Special case : mlt>maxLevel, but maxLevel==currentLevel, no Level_up nor gateway
+		// Special case : mlt>maxLevel==currentLevel, no Level_up nor gateway
 		if ((maxLevel==currentLevel) && (!(LEVEL_UP(ref))))
 		{
-			gateway = &(LEVEL_UP(ref));    // note : *gateway = 0
-			LEVEL(currentLevel)=ref;
-			ref = NEXT_TRY(ref);
-			continue;
+			gateway = &(LEVEL_UP(ref));							// note : *gateway = 0
+			goto _continue_same_level;
 		}
 
-		// Special case : mlt>maxLevel, but no gateway, maxLevel==currentLevel, and hopefully Level_up available
+		// Special case : mlt>maxLevel==currentLevel, Level_up available, but no gateway
 		if (maxLevel==currentLevel)
 		{
+			LEVEL(currentLevel) = ref;
 			ref = LEVEL_UP(ref);
-			currentLevel++;
 			maxLevel++;
+			currentLevel++; stepNb++;
 			continue;
 		}
 
-		// Special case : no gateway, but mlt>maxLevel
+		// Special case : mlt>maxLevel, but no gateway; Note that we don't know about level_up yet
 		{
 			gateway = &(LEVEL_UP(ref));
-			mlt = maxLevel;
-			goto _place_into_chain;
+			NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;		// Completing chain of maxLevel
+			goto _check_mmc_levelup;
 		}
 
 	}
 
 	if (gateway) *gateway=ip-MAX_DISTANCE-1;    // early end trick
+	stepNb++;
 
 	// prevent match beyond buffer
-	if (ip + matchLength > iend) matchLength=iend-ip;
+	if ((ip+ml)>iend) ml = iend-ip;
 
-	return matchLength;
+	return ml;
 }
 
 
-static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
+__inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
 	struct segmentTracker * Segments = MMC->segments;
@@ -437,7 +477,7 @@ static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 }
 
 
-U32 MMC_Insert1 (void* MMC_Data, BYTE* ip, U32 length)
+U32 MMC_Insert1 (void* MMC_Data, BYTE* ip)
 {
 	MMC_Insert (MMC_Data, ip, 1);
 	return 1;
