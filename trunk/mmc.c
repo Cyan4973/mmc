@@ -40,16 +40,15 @@
 #define MAX_LEVELS_LOG 16
 #define MAX_LEVELS (1U<<MAX_LEVELS_LOG)
 #define MAX_LEVELS_MASK (MAX_LEVELS-1)
+#define LEVEL_DOWN ((BYTE*)1)
 
-#define HASH_LOG ((DICTIONARY_LOGSIZE/2)+9)  // HASH_LOG = 17 (128K) for Dictionary of 64K
+#define HASH_LOG (DICTIONARY_LOGSIZE-1)  
 #define HASHTABLESIZE (1 << HASH_LOG)
 #define HASH_MASK (HASHTABLESIZE - 1)
 
 #define MAXD (1U<<DICTIONARY_LOGSIZE)
 #define MAXD_MASK (MAXD - 1)
 #define MAX_DISTANCE (MAXD - 1)
-
-#define LEVEL_DOWN ((BYTE*)1)
 
 
 //************************************************************
@@ -76,7 +75,6 @@ struct segmentTracker
 struct MMC_Data_Structure
 {
 	BYTE* beginBuffer;		// First byte of data buffer being searched
-	BYTE* endBuffer;		// Last+1 byte of data buffer being searched
 	BYTE* hashTable[HASHTABLESIZE];
 	struct selectNextHop chainTable[MAXD];
 	struct segmentTracker segments[NBCHARACTERS];
@@ -101,24 +99,24 @@ struct MMC_Data_Structure
 //************************************************************
 // Creation & Destruction
 //************************************************************
-void* MMC_Create (BYTE* beginBuffer, BYTE* endBuffer)
+void* MMC_Create (BYTE* beginBuffer)
 {
-	void* r;
-	r = ALLOCATOR(sizeof(struct MMC_Data_Structure));
-	MMC_Init(r, beginBuffer, endBuffer);
-	return r;
+	void* mmc;
+	mmc = ALLOCATOR(sizeof(struct MMC_Data_Structure));
+	MMC_Init(mmc, beginBuffer);
+	return mmc;
 }
 
 
-U32 MMC_Init (void* MMC_Data, BYTE* beginBuffer, BYTE* endBuffer)
+U32 MMC_Init (void* MMC_Data, BYTE* beginBuffer)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
 
 	MMC->beginBuffer = beginBuffer;
-	MMC->endBuffer = endBuffer;
 	MEM_INIT(MMC->hashTable, 0, sizeof(MMC->hashTable));
 	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
-	MEM_INIT(MMC->segments, 0, sizeof(MMC->segments)); { U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = beginBuffer-(MAX_DISTANCE+1); } }
+	MEM_INIT(MMC->segments, 0, sizeof(MMC->segments)); 
+	{ U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = beginBuffer-(MAX_DISTANCE+1); } }
 
 	return 1;
 }
@@ -135,7 +133,7 @@ U32 MMC_Free (void** MMC_Data)
 //************************************************************
 // Basic Search operations (Greedy / Lazy / Flexible parsing)
 //************************************************************
-U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
+U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLength, BYTE** matchpos)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
 	struct segmentTracker * Segments = MMC->segments;
@@ -143,8 +141,9 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 	BYTE*** trackPtr = MMC->trackPtr;
 	BYTE** levelList = MMC->levelList;
 	BYTE** HashTable = MMC->hashTable;
-	BYTE*  iend = MMC->endBuffer;
+	BYTE*  iend = inputPointer + maxLength;
 	U16*   trackStep = MMC->trackStep;
+	BYTE*  ip = inputPointer;
 	BYTE*  ref;
 	BYTE** gateway;
 	BYTE*  currentP;
@@ -155,13 +154,13 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 	ml = mlt = nbChars = 0;
 	sequence = *(U32*)ip;
 
-	// Special Stream match finder
+	// stream match finder
 	if ((U16)sequence==(U16)(sequence>>16))
 	if ((BYTE)sequence == (BYTE)(sequence>>8))
 	{
 		BYTE c = (BYTE)sequence;
 		U32 index = Segments[c].start;
-		BYTE* endSegment = ip+4;
+		BYTE* endSegment = ip+MINMATCH;
 
 		while ((*endSegment==c) && (endSegment<iend)) endSegment++; nbChars = endSegment-ip;
 
@@ -174,7 +173,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 			if (nbChars==MINMATCH) MMC_Insert1(MMC, ip);
 			if (*(ip-1)==c)         // obvious RLE solution
 			{
-				*r=ip-1;
+				*matchpos=ip-1;
 				return nbChars;
 			}
 			return 0;
@@ -185,7 +184,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		LEVEL(currentLevel) = ip;
 		gateway = 0; // work around due to erasing
 		LEVEL_UP(ip) = 0;
-		if (*(ip-1)==c) *r = ip-1; else *r = ref;     // "basis" to be improved upon
+		if (*(ip-1)==c) *matchpos = ip-1; else *matchpos = ref;     // "basis" to be improved upon
 		if (nbChars==MINMATCH) 
 		{
 			MMC_Insert1(MMC, ip);
@@ -194,7 +193,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		goto _FindBetterMatch;
 	}
 
-	// MMC Sequence match finder
+	// MMC match finder
 	ref=HashTable[HASH_FUNCTION(sequence)];
 	ADD_HASH(ip);
 	if (!ref) return 0;
@@ -218,7 +217,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*r = ref; 
+			*matchpos = ref; 
 		}
 
 		// Continue level mlt chain
@@ -263,7 +262,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* ip, BYTE** r)
 	if (ml==0) return 0;  // no match found
 
 
-	// looking for further length of matches
+	// looking for better length of match
 _FindBetterMatch:
 	while ((ref) && ((ip-ref) < MAX_DISTANCE))
 	{
@@ -341,7 +340,7 @@ _continue_same_level:
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*r = ref; 
+			*matchpos = ref; 
 		}
 
 		// placing into corresponding chain
@@ -443,7 +442,7 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 		nbForwardChars = endSegment-ip;
 		while ((baseStreamP>beginBuffer) && (*baseStreamP==c)) baseStreamP--; baseStreamP++; nbPreviousChars = ip-baseStreamP;
 		segmentSize = nbForwardChars + nbPreviousChars;
-		if (segmentSize >= MAXD) segmentSize = MAXD-1;
+		if (segmentSize >= MAX_DISTANCE) segmentSize = MAX_DISTANCE-1;
 
 		while (Segments[c].segments[Segments[c].start].size <= segmentSize)
 		{
@@ -477,31 +476,32 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 }
 
 
-U32 MMC_Insert1 (void* MMC_Data, BYTE* ip)
+U32 MMC_Insert1 (void* MMC_Data, BYTE* inputPointer)
 {
-	MMC_Insert (MMC_Data, ip, 1);
+	MMC_Insert (MMC_Data, inputPointer, 1);
 	return 1;
 }
 
-U32 MMC_InsertMany (void* MMC_Data, BYTE* ip, U32 length)
+U32 MMC_InsertMany (void* MMC_Data, BYTE* inputPointer, U32 length)
 {
-	BYTE* iend = ip+length;
-	while  (ip<iend) ip += MMC_Insert (MMC_Data, ip, iend-ip);
+	BYTE* iend = inputPointer+length;
+	while  (inputPointer<iend) inputPointer += MMC_Insert (MMC_Data, inputPointer, iend-inputPointer);
 	return length;
 }
 
 
 //************************************************************
 // Advanced Search operations (Optimal parsing)
+// Note : not completed yet
 //************************************************************
 
-U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* ip, BYTE** r)
+U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLength, BYTE** matchpos)
 {
 	return 0;
 }
 
 
-U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** r)
+U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** matchpos)
 {
 	return 0;
 }
