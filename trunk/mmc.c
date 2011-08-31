@@ -1,7 +1,7 @@
 /*
    MMC (Morphing Match Chain)
    Match Finder
-   Copyright (C) Yann Collet 2010,
+   Copyright (C) Yann Collet 2010-2011
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -31,6 +31,23 @@
 #define MEM_INIT memset
 
 
+//**************************************
+// Basic Types
+//**************************************
+#if defined(_MSC_VER) || defined(_WIN32) || defined(__WIN32__)
+#define BYTE	unsigned __int8
+#define U16		unsigned __int16
+#define U32		unsigned __int32
+#define S32		__int32
+#else
+#include <stdint.h>
+#define BYTE	uint8_t
+#define U16		uint16_t
+#define U32		uint32_t
+#define S32		int32_t
+#endif
+
+
 //************************************************************
 // Constants
 //************************************************************
@@ -46,8 +63,8 @@
 #define HASHTABLESIZE (1 << HASH_LOG)
 #define HASH_MASK (HASHTABLESIZE - 1)
 
-#define MAXD (1U<<DICTIONARY_LOGSIZE)
-#define MAXD_MASK (MAXD - 1)
+#define MAXD (1<<DICTIONARY_LOGSIZE)
+#define MAXD_MASK ((U32)(MAXD - 1))
 #define MAX_DISTANCE (MAXD - 1)
 
 
@@ -87,11 +104,11 @@ struct MMC_Data_Structure
 //************************************************************
 // Macro
 //************************************************************
-#define HASH_FUNCTION(i)	((i * 2654435761) >> ((MINMATCH*8)-HASH_LOG))
+#define HASH_FUNCTION(i)	((i * 2654435761U) >> ((MINMATCH*8)-HASH_LOG))
 #define HASH_VALUE(p)		HASH_FUNCTION(*(U32*)p)
 #define HASH_POINTER(p)		HashTable[HASH_VALUE(p)]
-#define NEXT_TRY(p)			chainTable[(U32)(p) & MAXD_MASK].nextTry 
-#define LEVEL_UP(p)			chainTable[(U32)(p) & MAXD_MASK].levelUp
+#define NEXT_TRY(p)			chainTable[(unsigned long)(p) & MAXD_MASK].nextTry 
+#define LEVEL_UP(p)			chainTable[(unsigned long)(p) & MAXD_MASK].levelUp
 #define ADD_HASH(p)			{ NEXT_TRY(p) = HashTable[HASH_VALUE(p)]; LEVEL_UP(p)=0; HashTable[HASH_VALUE(p)] = p; }
 #define LEVEL(l)			levelList[(l)&MAX_LEVELS_MASK]
 
@@ -99,7 +116,7 @@ struct MMC_Data_Structure
 //************************************************************
 // Creation & Destruction
 //************************************************************
-void* MMC_Create (BYTE* beginBuffer)
+void* MMC_Create (char* beginBuffer)
 {
 	void* mmc;
 	mmc = ALLOCATOR(sizeof(struct MMC_Data_Structure));
@@ -108,21 +125,21 @@ void* MMC_Create (BYTE* beginBuffer)
 }
 
 
-U32 MMC_Init (void* MMC_Data, BYTE* beginBuffer)
+int MMC_Init (void* MMC_Data, char* beginBuffer)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
 
-	MMC->beginBuffer = beginBuffer;
+	MMC->beginBuffer = (BYTE*)beginBuffer;
 	MEM_INIT(MMC->hashTable, 0, sizeof(MMC->hashTable));
 	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
 	MEM_INIT(MMC->segments, 0, sizeof(MMC->segments)); 
-	{ U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = beginBuffer-(MAX_DISTANCE+1); } }
+	{ U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = (BYTE*)beginBuffer-(MAX_DISTANCE+1); } }
 
 	return 1;
 }
 
 
-U32 MMC_Free (void** MMC_Data)
+int MMC_Free (void** MMC_Data)
 {
 	FREEMEM(*MMC_Data);
 	*MMC_Data = NULL;
@@ -133,7 +150,7 @@ U32 MMC_Free (void** MMC_Data)
 //************************************************************
 // Basic Search operations (Greedy / Lazy / Flexible parsing)
 //************************************************************
-U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLength, BYTE** matchpos)
+int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
 	struct segmentTracker * Segments = MMC->segments;
@@ -141,9 +158,9 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLengt
 	BYTE*** trackPtr = MMC->trackPtr;
 	BYTE** levelList = MMC->levelList;
 	BYTE** HashTable = MMC->hashTable;
-	BYTE*  iend = inputPointer + maxLength;
+	BYTE*  iend = (BYTE*)inputPointer + maxLength;
 	U16*   trackStep = MMC->trackStep;
-	BYTE*  ip = inputPointer;
+	BYTE*  ip = (BYTE*)inputPointer;
 	BYTE*  ref;
 	BYTE** gateway;
 	BYTE*  currentP;
@@ -170,10 +187,10 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLengt
 		{
 			// no "previous" segment within range
 			NEXT_TRY(ip) = LEVEL_UP(ip) = 0;    
-			if (nbChars==MINMATCH) MMC_Insert1(MMC, ip);
+			if (nbChars==MINMATCH) MMC_Insert1(MMC, (char*)ip);
 			if (*(ip-1)==c)         // obvious RLE solution
 			{
-				*matchpos=ip-1;
+				*matchpos=(char*)ip-1;
 				return nbChars;
 			}
 			return 0;
@@ -184,10 +201,10 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLengt
 		LEVEL(currentLevel) = ip;
 		gateway = 0; // work around due to erasing
 		LEVEL_UP(ip) = 0;
-		if (*(ip-1)==c) *matchpos = ip-1; else *matchpos = ref;     // "basis" to be improved upon
+		if (*(ip-1)==c) *matchpos = (char*)ip-1; else *matchpos = (char*)ref;     // "basis" to be improved upon
 		if (nbChars==MINMATCH) 
 		{
-			MMC_Insert1(MMC, ip);
+			MMC_Insert1(MMC, (char*)ip);
 			gateway = &LEVEL_UP(ip);
 		}
 		goto _FindBetterMatch;
@@ -217,7 +234,7 @@ U32 MMC_InsertAndFindBestMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLengt
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*matchpos = ref; 
+			*matchpos = (char*)ref; 
 		}
 
 		// Continue level mlt chain
@@ -340,7 +357,7 @@ _continue_same_level:
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*matchpos = ref; 
+			*matchpos = (char*)ref; 
 		}
 
 		// placing into corresponding chain
@@ -476,16 +493,16 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 }
 
 
-U32 MMC_Insert1 (void* MMC_Data, BYTE* inputPointer)
+int MMC_Insert1 (void* MMC_Data, char* inputPointer)
 {
-	MMC_Insert (MMC_Data, inputPointer, 1);
+	MMC_Insert (MMC_Data, (BYTE*)inputPointer, 1);
 	return 1;
 }
 
-U32 MMC_InsertMany (void* MMC_Data, BYTE* inputPointer, U32 length)
+int MMC_InsertMany (void* MMC_Data, char* inputPointer, int length)
 {
-	BYTE* iend = inputPointer+length;
-	while  (inputPointer<iend) inputPointer += MMC_Insert (MMC_Data, inputPointer, iend-inputPointer);
+	char* iend = inputPointer+length;
+	while  (inputPointer<iend) inputPointer += MMC_Insert (MMC_Data, (BYTE*)inputPointer, iend-inputPointer);
 	return length;
 }
 
@@ -495,6 +512,7 @@ U32 MMC_InsertMany (void* MMC_Data, BYTE* inputPointer, U32 length)
 // Note : not completed yet
 //************************************************************
 
+/*
 U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLength, BYTE** matchpos)
 {
 	return 0;
@@ -505,5 +523,6 @@ U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** matchpos)
 {
 	return 0;
 }
+*/
 
 
