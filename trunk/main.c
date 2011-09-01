@@ -33,6 +33,7 @@
 #include <stdlib.h>    // malloc
 #include <string.h>    // strcmp
 #include "lz4hc.h"
+#include "lz4.h"
 
 
 //**************************************
