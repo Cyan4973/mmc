@@ -29,7 +29,6 @@ extern "C" {
 //****************************
 
 int LZ4_compressHC (char* source, char* dest, int isize);
-int LZ4_uncompress (char* source, char* dest, int osize);
 
 /*
 LZ4_compressHC :
@@ -37,13 +36,6 @@ LZ4_compressHC :
 	note : destination buffer must be already allocated. 
 		To avoid any problem, size it to handle worst cases situations (input data not compressible)
 		Worst case size is : "inputsize + 0.4%", with "0.4%" being at least 8 bytes.
-
-LZ4_uncompress :
-	return : the number of bytes read in the source buffer
-			 If the source stream is malformed, the function will stop decoding and return a negative result, indicating the byte position of the faulty instruction
-			 This version never writes beyond dest + osize, and is therefore protected against malicious data packets
-	note 1 : osize is the output size, therefore the original size
-	note 2 : destination buffer must be already allocated
 */
 
 
@@ -51,20 +43,11 @@ LZ4_uncompress :
 // Advanced Functions
 //****************************
 
-int LZ4_uncompress_unknownOutputSize (char* source, char* dest, int isize, int maxOutputSize);
 
-/*
-LZ4_uncompress_unknownOutputSize :
-	return : the number of bytes decoded in the destination buffer (necessarily <= maxOutputSize)
-			 If the source stream is malformed, the function will stop decoding and return a negative result, indicating the byte position of the faulty instruction
-			 This version never writes beyond dest + maxOutputSize, and is therefore protected against malicious data packets
-	note 1 : isize is the input size, therefore the compressed size
-	note 2 : destination buffer must already be allocated, with at least maxOutputSize bytes
-	note 3 : this version is slower by up to 10%, and is therefore not recommended for general use
+
+/* Note :
+Decompression functions are provided within regular LZ4 source code (BSD license)
 */
-
-
-
 
 #if defined (__cplusplus)
 }
