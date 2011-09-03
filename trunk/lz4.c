@@ -161,7 +161,7 @@ int LZ4_compressCtx(void** ctx,
 		step=1;
 
 		// Catch up
-		while ((ip>anchor) && (ip[-1]==ref[-1])) { ip--; ref--; }  
+		while ((ip>anchor) && (ref>(BYTE*)source) && (ip[-1]==ref[-1])) { ip--; ref--; }  
 
 		// Encode Literal length
 		length = ip - anchor;

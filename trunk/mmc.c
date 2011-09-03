@@ -34,7 +34,7 @@
 //**************************************
 // Basic Types
 //**************************************
-#if defined(_MSC_VER) || defined(_WIN32) || defined(__WIN32__)
+#if defined(_MSC_VER)
 #define BYTE	unsigned __int8
 #define U16		unsigned __int16
 #define U32		unsigned __int32
