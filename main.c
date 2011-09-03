@@ -82,8 +82,9 @@ int usage()
 	fprintf(stderr, "Usage :\n");
 	fprintf(stderr, "      %s [arg] input output\n",BINARY_NAME);
 	fprintf(stderr, "Arguments :\n");
-	fprintf(stderr, " -c : force compression (default)\n");
-	fprintf(stderr, " -d : force decompression \n");
+	fprintf(stderr, " -c0: Fast compression \n");
+	fprintf(stderr, " -c1: High compression (default) \n");
+	fprintf(stderr, " -d : Decompression \n");
 	fprintf(stderr, " -h : help (this text)\n");	
 	fprintf(stderr, "input  : can be 'stdin' (pipe)  or a filename\n");
 	fprintf(stderr, "output : can be 'stdout' (pipe) or a filename\n");
@@ -99,8 +100,9 @@ int badusage()
 }
 
 
-int compress_file(char* input_filename, char* output_filename)
+int compress_file(char* input_filename, char* output_filename, int compressionlevel)
 {
+	int (*compressionFunction)(char*, char*, int);
 	U64 filesize = 0;
 	U64 compressedfilesize = ARCHIVE_MAGICNUMBER_SIZE;
 	char* in_buff;
@@ -109,6 +111,13 @@ int compress_file(char* input_filename, char* output_filename)
 	FILE* foutput;
 	char stdinmark[] = "stdin";
 	char stdoutmark[] = "stdout";
+
+	switch (compressionlevel)
+	{
+	case 0 : compressionFunction = LZ4_compress; break;
+	default : compressionFunction = LZ4_compressHC;
+	}
+	
 
 	if (!strcmp (input_filename, stdinmark)) {
 		fprintf(stderr, "Using stdin for input\n");
@@ -145,7 +154,7 @@ int compress_file(char* input_filename, char* output_filename)
 		filesize += inSize;
 
 		// Compress Block
-		outSize = LZ4_compressHC(in_buff, out_buff+4, inSize);
+		outSize = compressionFunction(in_buff, out_buff+4, inSize);
 		* (U32*) out_buff = outSize;
 		compressedfilesize += outSize+4;
 
@@ -266,7 +275,7 @@ int main(int argc, char** argv)
 		if ( argument[0] =='h' ) { usage(); return 0; }
 
 		// Forced Compression (default)
-		if ( argument[0] =='c' ) { compression=1; continue; }
+		if ( argument[0] =='c' ) { if (argument[1] =='0') compression=0; continue; }
 
 		// Forced Decoding
 		if ( argument[0] =='d' ) { decode=1; continue; }
@@ -287,9 +296,5 @@ int main(int argc, char** argv)
 
   if (decode) return decode_file(input_filename, output_filename);
 
-  if (compression) return compress_file(input_filename, output_filename);
-
-  badusage();
-
-  return 0;
+  return compress_file(input_filename, output_filename, compression);
 }
