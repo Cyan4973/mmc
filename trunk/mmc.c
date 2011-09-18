@@ -295,8 +295,9 @@ _FindBetterMatch:
 			stepNb=1;
 		}
 
+		// Match Count
 		mlt = currentLevel;
-		while (*(ip+mlt) == *(ref+mlt)) mlt++;
+		while ((mlt<(U32)maxLength) && (*(ip+mlt)) == *(ref+mlt)) mlt++;
 
 		// First case : No improvement => continue on current chain
 		if (mlt==currentLevel)
