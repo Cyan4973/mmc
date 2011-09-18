@@ -192,7 +192,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 			// no "previous" segment within range
 			NEXT_TRY(ip) = LEVEL_UP(ip) = 0;    
 			if (nbChars==MINMATCH) MMC_Insert1(MMC, (char*)ip);
-			if (*(ip-1)==c)         // obvious RLE solution
+			if ((ip>MMC->beginBuffer) && (*(ip-1)==c))         // obvious RLE solution
 			{
 				*matchpos=(char*)ip-1;
 				return nbChars;
