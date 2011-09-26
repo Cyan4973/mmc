@@ -72,26 +72,3 @@ MMC_InsertMany :
 		return : 1+ = Nb of bytes inserted; 0 = error; 
 */
 
-//************************************************************
-// Advanced Search operations (Optimal parsing)
-//************************************************************
-
-/*
-Not completed (yet)
-
-int MMC_InsertAndFindFirstMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos);
-int MMC_FindBetterMatch (void* MMC_Data, char** matchpos);
-*/
-
-/*
-MMC_InsertAndFindFirstMatch :
-	inputPointer : position being inserted & tested
-	return : length of First Match found (which is likely to be MINMATCH, but could be more too)
-			if return > 0, then match position is into r
-MMC_FindBetterMatch :
-	note : there is no "p" input => not needed, we just continue from previous search position (stateful)
-	return : length of Better Match found (which is always > than previous match length)
-			if no better match is found, result is 0
-			if return > 0, then match position is into r
-*/
-
