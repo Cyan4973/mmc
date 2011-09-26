@@ -58,7 +58,7 @@
 #define NBCHARACTERS 256
 #define MAXNBSEGMENTS 256
 
-#define MAX_LEVELS_LOG 16
+#define MAX_LEVELS_LOG (DICTIONARY_LOGSIZE-1)  
 #define MAX_LEVELS (1U<<MAX_LEVELS_LOG)
 #define MAX_LEVELS_MASK (MAX_LEVELS-1)
 #define LEVEL_DOWN ((BYTE*)1)
@@ -101,7 +101,6 @@ struct MMC_Data_Structure
 	struct segmentTracker segments[NBCHARACTERS];
 	BYTE* levelList[MAX_LEVELS];
 	BYTE** trackPtr[NBCHARACTERS];
-	U16 trackStep[NBCHARACTERS];
 };
 
 
@@ -151,20 +150,20 @@ int MMC_Free (void** MMC_Data)
 }
 
 
-//************************************************************
+//*********************************************************************
 // Basic Search operations (Greedy / Lazy / Flexible parsing)
-//************************************************************
+//*********************************************************************
 int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos)
 {
 	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
-	struct segmentTracker * Segments = MMC->segments;
-	struct selectNextHop * chainTable = MMC->chainTable;
-	BYTE*** trackPtr = MMC->trackPtr;
-	BYTE** levelList = MMC->levelList;
-	BYTE** HashTable = MMC->hashTable;
-	BYTE*  iend = (BYTE*)inputPointer + maxLength;
-	U16*   trackStep = MMC->trackStep;
-	BYTE*  ip = (BYTE*)inputPointer;
+	struct segmentTracker * const Segments = MMC->segments;
+	struct selectNextHop * const chainTable = MMC->chainTable;
+	BYTE** const HashTable = MMC->hashTable;
+	BYTE** const levelList = MMC->levelList;
+	BYTE*** const trackPtr = MMC->trackPtr;
+	U16 trackStep[NBCHARACTERS];
+	const BYTE* const iend = (BYTE*)inputPointer + maxLength;
+	BYTE* ip = (BYTE*)inputPointer;
 	BYTE*  ref;
 	BYTE** gateway;
 	BYTE*  currentP;
@@ -244,7 +243,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 		// Continue level mlt chain
 		if (mlt<=maxLevel)
 		{
-			NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;		// Completing chain at Level mlt
+			NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;	// Completing chain at Level mlt
 		}
 
 		// New level creation
@@ -254,7 +253,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 			{
 				maxLevel++;
 				*gateway = ref;
-				LEVEL(maxLevel)=ref;								// First element of level maxLevel
+				LEVEL(maxLevel)=ref;						// First element of level maxLevel
 				if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
 			}
 
@@ -303,26 +302,26 @@ _FindBetterMatch:
 		if (mlt==currentLevel)
 		{
 			BYTE c = *(ref+currentLevel);
-			if (trackStep[c] == stepNb)									// this wrong character was already met before
+			if (trackStep[c] == stepNb)								// this wrong character was already met before
 			{
 				BYTE* next = NEXT_TRY(ref);
-				*trackPtr[c] = ref;										// linking
-				NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);			// extraction
+				*trackPtr[c] = ref;									// linking
+				NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);		// extraction
 				if (LEVEL_UP(ref))
 				{
-					NEXT_TRY(ref) = LEVEL_UP(ref);						// Promotion
+					NEXT_TRY(ref) = LEVEL_UP(ref);					// Promotion
 					LEVEL_UP(ref) = 0;
-					trackStep[c] = 0;									// Shutdown chain (avoid overwriting when multiple unfinished chains)
+					trackStep[c] = 0;								// Shutdown chain (avoid overwriting when multiple unfinished chains)
 				}
 				else
 				{
-					NEXT_TRY(ref) = LEVEL_DOWN;							// Promotion, but link back to previous level for now
-					trackPtr[c] = &(NEXT_TRY(ref));						// saving for next link
+					NEXT_TRY(ref) = LEVEL_DOWN;						// Promotion, but link back to previous level for now
+					trackPtr[c] = &(NEXT_TRY(ref));					// saving for next link
 				}
 
 				if (next==LEVEL_DOWN)
 				{
-					NEXT_TRY(LEVEL(currentLevel)) = 0;					// Erase the LEVEL_DOWN
+					NEXT_TRY(LEVEL(currentLevel)) = 0;				// Erase the LEVEL_DOWN
 					currentLevel--; stepNb++;
 					next = NEXT_TRY(LEVEL(currentLevel));	
 					while (next > ref) { LEVEL(currentLevel) = next; next = NEXT_TRY(next); }
@@ -510,24 +509,5 @@ int MMC_InsertMany (void* MMC_Data, char* inputPointer, int length)
 	while  (inputPointer<iend) inputPointer += MMC_Insert (MMC_Data, (BYTE*)inputPointer, iend-inputPointer);
 	return length;
 }
-
-
-//************************************************************
-// Advanced Search operations (Optimal parsing)
-// Note : not completed yet
-//************************************************************
-
-/*
-U32 MMC_InsertAndFindFirstMatch (void* MMC_Data, BYTE* inputPointer, U32 maxLength, BYTE** matchpos)
-{
-	return 0;
-}
-
-
-U32 MMC_FindBetterMatch (void* MMC_Data, BYTE** matchpos)
-{
-	return 0;
-}
-*/
 
 
