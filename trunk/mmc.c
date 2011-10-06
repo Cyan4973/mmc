@@ -110,8 +110,8 @@ struct MMC_Data_Structure
 #define HASH_FUNCTION(i)	((i * 2654435761U) >> ((MINMATCH*8)-HASH_LOG))
 #define HASH_VALUE(p)		HASH_FUNCTION(*(U32*)p)
 #define HASH_POINTER(p)		HashTable[HASH_VALUE(p)]
-#define NEXT_TRY(p)			chainTable[(unsigned long)(p) & MAXD_MASK].nextTry 
-#define LEVEL_UP(p)			chainTable[(unsigned long)(p) & MAXD_MASK].levelUp
+#define NEXT_TRY(p)			chainTable[(size_t)(p) & MAXD_MASK].nextTry 
+#define LEVEL_UP(p)			chainTable[(size_t)(p) & MAXD_MASK].levelUp
 #define ADD_HASH(p)			{ NEXT_TRY(p) = HashTable[HASH_VALUE(p)]; LEVEL_UP(p)=0; HashTable[HASH_VALUE(p)] = p; }
 #define LEVEL(l)			levelList[(l)&MAX_LEVELS_MASK]
 
