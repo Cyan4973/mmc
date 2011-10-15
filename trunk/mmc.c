@@ -57,7 +57,9 @@
 // Constants
 //************************************************************
 #define NBCHARACTERS 256
-#define MAXNBSEGMENTS 256
+
+#define MAXNBSEGMENTS_LOG ((DICTIONARY_LOGSIZE/2)-1)
+#define MAXNBSEGMENTS (1<<MAXNBSEGMENTS_LOG)
 
 #define MAX_LEVELS_LOG (DICTIONARY_LOGSIZE-1)  
 #define MAX_LEVELS (1U<<MAX_LEVELS_LOG)
@@ -233,7 +235,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 		}
 
 		mlt = MINMATCH;
-		while (*(ip+mlt) == *(ref+mlt)) mlt++;
+		while ((mlt<(U32)maxLength) && (*(ip+mlt)) == *(ref+mlt)) mlt++;
 
 		if (mlt>ml)
 		{
@@ -486,6 +488,18 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 		}
 
 		Segments[c].start++;
+		// overflow protection
+		if (Segments[c].start > MAXNBSEGMENTS-1) 
+		{
+			int beginning=0;
+			U32 i;
+			
+			while (Segments[c].segments[beginning].position < (ip-MAX_DISTANCE)) beginning++;
+			i = beginning;
+			while (i<Segments[c].start) { Segments[c].segments[i - (beginning-1)] = Segments[c].segments[i]; i++; }
+			Segments[c].start -= (beginning-1);
+			
+		}
 		Segments[c].segments[Segments[c].start].position = endSegment;
 		Segments[c].segments[Segments[c].start].size = segmentSize;
 
