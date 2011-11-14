@@ -30,7 +30,8 @@
 
 // Allocator definitions
 #include <stdlib.h>
-#define ALLOCATOR malloc
+#define ALLOCATOR(s) calloc(1,s)
+#define REALLOCATOR(p,s) realloc(p,s)
 #define FREEMEM free
 #include <string.h>
 #define MEM_INIT memset
@@ -42,12 +43,14 @@
 #if defined(_MSC_VER)
 #define BYTE	unsigned __int8
 #define U16		unsigned __int16
+#define S16		__int16
 #define U32		unsigned __int32
 #define S32		__int32
 #else
 #include <stdint.h>
 #define BYTE	uint8_t
 #define U16		uint16_t
+#define S16		int16_t
 #define U32		uint32_t
 #define S32		int32_t
 #endif
@@ -56,55 +59,57 @@
 //************************************************************
 // Constants
 //************************************************************
-#define NBCHARACTERS 256
+#define MAXD (1<<DICTIONARY_LOGSIZE)
+#define MAXD_MASK ((U32)(MAXD - 1))
+#define MAX_DISTANCE (MAXD - 1)
 
-#define MAXNBSEGMENTS_LOG ((DICTIONARY_LOGSIZE/2)-1)
-#define MAXNBSEGMENTS (1<<MAXNBSEGMENTS_LOG)
+#define HASH_LOG 16    
+#define HASHTABLESIZE (1 << HASH_LOG)
+#define HASH_MASK (HASHTABLESIZE - 1)
 
 #define MAX_LEVELS_LOG (DICTIONARY_LOGSIZE-1)  
 #define MAX_LEVELS (1U<<MAX_LEVELS_LOG)
 #define MAX_LEVELS_MASK (MAX_LEVELS-1)
+
+#define NBCHARACTERS 256
+#define NB_INITIAL_SEGMENTS 16
+
 #define LEVEL_DOWN ((BYTE*)1)
 
-#define HASH_LOG (DICTIONARY_LOGSIZE-1)  
-#define HASHTABLESIZE (1 << HASH_LOG)
-#define HASH_MASK (HASHTABLESIZE - 1)
-
-#define MAXD (1<<DICTIONARY_LOGSIZE)
-#define MAXD_MASK ((U32)(MAXD - 1))
-#define MAX_DISTANCE (MAXD - 1)
 
 
 //************************************************************
 // Local Types
 //************************************************************
-struct selectNextHop
+typedef struct 
 {
 	BYTE* levelUp;
 	BYTE* nextTry;
-};
+}selectNextHop_t;
 
-struct segmentInfo
+typedef struct  
 {
 	BYTE* position;
 	U32   size;
-};
+} segmentInfo_t;
 
-struct segmentTracker
+typedef struct 
 {
-	struct segmentInfo segments[MAXNBSEGMENTS];
-	U32 start;
-};
+	segmentInfo_t * segments;
+	U16 start;
+	U16 max;
+} segmentTracker_t;
 
-struct MMC_Data_Structure
+typedef struct 
 {
 	BYTE* beginBuffer;		// First byte of data buffer being searched
 	BYTE* hashTable[HASHTABLESIZE];
-	struct selectNextHop chainTable[MAXD];
-	struct segmentTracker segments[NBCHARACTERS];
+	selectNextHop_t chainTable[MAXD];
+	segmentTracker_t segments[NBCHARACTERS];
 	BYTE* levelList[MAX_LEVELS];
 	BYTE** trackPtr[NBCHARACTERS];
-};
+	U16 trackStep[NBCHARACTERS];
+} MMC_Data_Structure;
 
 
 //************************************************************
@@ -124,22 +129,31 @@ struct MMC_Data_Structure
 //************************************************************
 void* MMC_Create (char* beginBuffer)
 {
-	void* mmc;
-	mmc = ALLOCATOR(sizeof(struct MMC_Data_Structure));
-	MMC_Init(mmc, beginBuffer);
+	void* mmc = ALLOCATOR(sizeof(MMC_Data_Structure));
+	MMC_Init (mmc, beginBuffer);
 	return mmc;
 }
 
 
 int MMC_Init (void* MMC_Data, char* beginBuffer)
 {
-	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
+	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
 
 	MMC->beginBuffer = (BYTE*)beginBuffer;
 	MEM_INIT(MMC->hashTable, 0, sizeof(MMC->hashTable));
 	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
-	MEM_INIT(MMC->segments, 0, sizeof(MMC->segments)); 
-	{ U32 i; for (i=0; i<NBCHARACTERS; i++) { MMC->segments[i].segments[0].size = -1; MMC->segments[i].segments[0].position = (BYTE*)beginBuffer-(MAX_DISTANCE+1); } }
+	// Init RLE detector
+	{ 
+		int c; 
+		for (c=0; c<NBCHARACTERS; c++) 
+		{ 
+			MMC->segments[c].segments = (segmentInfo_t *) REALLOCATOR(MMC->segments[c].segments, NB_INITIAL_SEGMENTS * sizeof(segmentInfo_t));
+			MMC->segments[c].max = NB_INITIAL_SEGMENTS;
+			MMC->segments[c].start = 0;
+			MMC->segments[c].segments[0].size = -1; 
+			MMC->segments[c].segments[0].position = (BYTE*)beginBuffer - (MAX_DISTANCE+1); 
+		} 
+	}
 
 	return 1;
 }
@@ -147,9 +161,15 @@ int MMC_Init (void* MMC_Data, char* beginBuffer)
 
 int MMC_Free (void** MMC_Data)
 {
+	MMC_Data_Structure * MMC = * (MMC_Data_Structure **) MMC_Data;
+	// RLE dynamic structure releasing
+	{ 
+		int c; 
+		for (c=0; c<NBCHARACTERS; c++) FREEMEM(MMC->segments[c].segments);
+	}
 	FREEMEM(*MMC_Data);
 	*MMC_Data = NULL;
-	return (sizeof(struct MMC_Data_Structure));
+	return (1);
 }
 
 
@@ -158,13 +178,13 @@ int MMC_Free (void** MMC_Data)
 //*********************************************************************
 int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos)
 {
-	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
-	struct segmentTracker * const Segments = MMC->segments;
-	struct selectNextHop * const chainTable = MMC->chainTable;
+	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
+	segmentTracker_t * const Segments = MMC->segments;
+	selectNextHop_t * const chainTable = MMC->chainTable;
 	BYTE** const HashTable = MMC->hashTable;
 	BYTE** const levelList = MMC->levelList;
 	BYTE*** const trackPtr = MMC->trackPtr;
-	U16 trackStep[NBCHARACTERS];
+	U16*   trackStep = MMC->trackStep;
 	const BYTE* const iend = (BYTE*)inputPointer + maxLength;
 	BYTE* ip = (BYTE*)inputPointer;
 	BYTE*  ref;
@@ -445,9 +465,9 @@ _check_mmc_levelup:
 
 __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 {
-	struct MMC_Data_Structure * MMC = (struct MMC_Data_Structure *) MMC_Data;
-	struct segmentTracker * Segments = MMC->segments;
-	struct selectNextHop * chainTable = MMC->chainTable;
+	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
+	segmentTracker_t * Segments = MMC->segments;
+	selectNextHop_t * chainTable = MMC->chainTable;
 	BYTE** HashTable = MMC->hashTable;
 	BYTE* iend = ip+max;
 	BYTE* beginBuffer = MMC->beginBuffer;
@@ -457,16 +477,17 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 	{
 		BYTE c=*ip;
 		U32 nbForwardChars, nbPreviousChars, segmentSize, n=MINMATCH;
-		BYTE* endSegment=ip+4;
-		BYTE* baseStreamP=ip-1;
+		BYTE* endSegment = ip+MINMATCH;
+		BYTE* baseStreamP = ip;
 
 		iend += MINMATCH;
 		while ((*endSegment==c) && (endSegment<iend)) endSegment++; 
-		if (endSegment == iend) return (iend-ip);			// Stop update here : we'll get this match sorted out on next pass.
+		if (endSegment == iend) return (iend-ip);			// skip the whole forward segment; we'll start again later
 		nbForwardChars = endSegment-ip;
-		while ((baseStreamP>beginBuffer) && (*baseStreamP==c)) baseStreamP--; baseStreamP++; nbPreviousChars = ip-baseStreamP;
+		while ((baseStreamP>beginBuffer) && (baseStreamP[-1]==c)) baseStreamP--; 
+		nbPreviousChars = ip-baseStreamP;
 		segmentSize = nbForwardChars + nbPreviousChars;
-		if (segmentSize >= MAX_DISTANCE) segmentSize = MAX_DISTANCE-1;
+		if (segmentSize > MAX_DISTANCE-1) segmentSize = MAX_DISTANCE-1;
 
 		while (Segments[c].segments[Segments[c].start].size <= segmentSize)
 		{
@@ -487,19 +508,21 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 			LEVEL_UP(endSegment-n) = 0;
 		}
 
-		Segments[c].start++;
-		// overflow protection
-		if (Segments[c].start > MAXNBSEGMENTS-1) 
+		// overflow protection : new segment smaller than previous, but too many segments in memory
+		if (Segments[c].start > Segments[c].max-2) 
 		{
 			int beginning=0;
 			U32 i;
-			
+
+			Segments[c].max *= 2;
+			Segments[c].segments = (segmentInfo_t *) REALLOCATOR (Segments[c].segments, (Segments[c].max)*sizeof(segmentInfo_t));
 			while (Segments[c].segments[beginning].position < (ip-MAX_DISTANCE)) beginning++;
 			i = beginning;
-			while (i<Segments[c].start) { Segments[c].segments[i - (beginning-1)] = Segments[c].segments[i]; i++; }
+			while (i<=Segments[c].start) { Segments[c].segments[i - (beginning-1)] = Segments[c].segments[i]; i++; }
 			Segments[c].start -= (beginning-1);
 			
 		}
+		Segments[c].start++;
 		Segments[c].segments[Segments[c].start].position = endSegment;
 		Segments[c].segments[Segments[c].start].size = segmentSize;
 
@@ -520,8 +543,8 @@ int MMC_Insert1 (void* MMC_Data, char* inputPointer)
 
 int MMC_InsertMany (void* MMC_Data, char* inputPointer, int length)
 {
-	char* iend = inputPointer+length;
-	while  (inputPointer<iend) inputPointer += MMC_Insert (MMC_Data, (BYTE*)inputPointer, iend-inputPointer);
+	int done=0;
+	while  (done<length) done += MMC_Insert (MMC_Data, (BYTE*)(inputPointer+done), length-done);
 	return length;
 }
 
