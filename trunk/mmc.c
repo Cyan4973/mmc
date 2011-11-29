@@ -63,7 +63,7 @@
 #define MAXD_MASK ((U32)(MAXD - 1))
 #define MAX_DISTANCE (MAXD - 1)
 
-#define HASH_LOG 16    
+#define HASH_LOG (MAXD-1)    
 #define HASHTABLESIZE (1 << HASH_LOG)
 #define HASH_MASK (HASHTABLESIZE - 1)
 
