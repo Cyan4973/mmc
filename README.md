@@ -1,7 +1,9 @@
 # mmc
 Automatically exported from code.google.com/p/mmc
 
-Novel algorithm for fast longest match search. Primarily designed for compression softwares.
+MMC stands for Morphing Match Chain.
+
+It's an algorithm for fast longest match search (primarily useful for compression softwares)
 
 MMC has been tested in combination with LZ4HC and zhuff compression algorithms.
 
