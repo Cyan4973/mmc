@@ -20,27 +20,32 @@
 
 	You can contact the author at :
 	- MMC homepage : http://fastcompression.blogspot.com/p/mmc-morphing-match-chain.html
-	- MMC source repository : http://code.google.com/p/mmc/
+	- MMC source repository : https://github.com/Cyan4973/mmc
 */
 
+#ifndef MMC_H
+#define MMC_H
 
-//************************************************************
-// Constants
-//************************************************************
-#define MINMATCH 4					// Note : for the time being, this cannot be changed
-#define DICTIONARY_LOGSIZE 16		// Dictionary Size as a power of 2 (ex : 2^16 = 64K)
-									// Total RAM allocated is 10x Dictionary (ex : Dictionary 64K ==> 640K)
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
+/* *************************************
+*  Includes
+***************************************/
+#include <stddef.h>   /* size_t */
 
 
-//************************************************************
-// Creation & Destruction
-//************************************************************
+/* **********************************************************
+*  Object Allocation
+************************************************************/
+typedef struct MMC_ctx_s MMC_ctx;   /* incomplete type */
 
-void* MMC_Create (char* beginBuffer);
-int MMC_Init (void* MMC_Data, char* beginBuffer);
-int MMC_Free (void** MMC_Data);
+MMC_ctx* MMC_Create (const void* beginBuffer);
+size_t   MMC_Init   (MMC_ctx* ctx, const void* beginBuffer);
+size_t   MMC_Free   (MMC_ctx* ctx);
 
-/*
+/**
 MMC_Create : (Note : Dictionary Size is a compilation directive !)
 			BYTE* startBuffer : first byte of data buffer being searched
 			return : Pointer to MMC Data Structure; NULL = error
@@ -51,26 +56,32 @@ MMC_Free : free memory from MMC Data Structure; caution : pointer MMC_Data must 
 			return : 1+ = OK; 0 = error;
 */
 
-//************************************************************
-// Basic Search operations (Greedy / Lazy / Flexible parsing)
-//************************************************************
+/* ***********************************************************
+*  Search operations (Greedy / Lazy / Flexible parsing)
+*************************************************************/
 
-int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos);
-int MMC_Insert1 (void* MMC_Data, char* inputPointer);
-int MMC_InsertMany (void* MMC_Data, char* inputPointer, int length);
+size_t MMC_InsertAndFindBestMatch (MMC_ctx* ctx, const void* inputPointer, size_t maxLength, const void** matchpos);
+size_t MMC_Insert1    (MMC_ctx* ctx, const void* inputPointer);
+size_t MMC_InsertMany (MMC_ctx* ctx, const void* inputPointer, size_t length);
 
-/*
+/**
 MMC_InsertAndFindBestMatch :
 	inputPointer : position being inserted & searched
 	maxLength : maximum match length autorized
 	return : length of Best Match
 			if return == 0, no match was found
-			if return > 0, then match position is into matchpos
+			if return > 0, match position is stored into *matchpos
 MMC_Insert1 :
 		inputPointer : position being inserted
-		return : 1+ = Nb of bytes inserted; 0 = error; 
+		return : 1+ = Nb of bytes inserted; 0 = error;
 MMC_InsertMany :
-		inputPointer : start position of segment being inserted
+		inputPointer : start of segment being inserted
 		return : 1+ = Nb of bytes inserted; 0 = error; 
 */
 
+
+#if defined (__cplusplus)
+}
+#endif
+
+#endif   /* MMC_H */

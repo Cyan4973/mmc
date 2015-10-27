@@ -23,12 +23,9 @@
 	- MMC source repository : http://code.google.com/p/mmc/
 */
 
-//************************************************************
-// Includes
-//************************************************************
-#include "mmc.h"
-
-// Allocator definitions
+/* **********************************************************
+* Includes
+************************************************************/
 #include <stdlib.h>
 #define ALLOCATOR(s) calloc(1,s)
 #define REALLOCATOR(p,s) realloc(p,s)
@@ -36,29 +33,18 @@
 #include <string.h>
 #define MEM_INIT memset
 
-
-//**************************************
-// Basic Types
-//**************************************
-#if defined(_MSC_VER)
-#define BYTE	unsigned __int8
-#define U16		unsigned __int16
-#define S16		__int16
-#define U32		unsigned __int32
-#define S32		__int32
-#else
-#include <stdint.h>
-#define BYTE	uint8_t
-#define U16		uint16_t
-#define S16		int16_t
-#define U32		uint32_t
-#define S32		int32_t
-#endif
+#include "mmc.h"
+#include "mem.h"   /* basic types and mem access */
 
 
-//************************************************************
-// Constants
-//************************************************************
+
+/* ***********************************************************
+*  Constants
+************************************************************/
+#define MINMATCH 4					// Note : for the time being, this cannot be changed
+#define DICTIONARY_LOGSIZE 16		// Dictionary Size as a power of 2 (ex : 2^16 = 64K)
+									// Total RAM allocated is 10x Dictionary (ex : Dictionary 64K ==> 640K)
+
 #define MAXD (1<<DICTIONARY_LOGSIZE)
 #define MAXD_MASK ((U32)(MAXD - 1))
 #define MAX_DISTANCE (MAXD - 1)
@@ -77,19 +63,18 @@
 #define LEVEL_DOWN ((BYTE*)1)
 
 
-
-//************************************************************
-// Local Types
-//************************************************************
+/* **********************************************************
+*  Local Types
+************************************************************/
 typedef struct 
 {
-	BYTE* levelUp;
-	BYTE* nextTry;
+	const BYTE* levelUp;
+	const BYTE* nextTry;
 }selectNextHop_t;
 
 typedef struct  
 {
-	BYTE* position;
+	const BYTE* position;
 	U32   size;
 } segmentInfo_t;
 
@@ -100,23 +85,23 @@ typedef struct
 	U16 max;
 } segmentTracker_t;
 
-typedef struct 
+struct MMC_ctx_s
 {
-	BYTE* beginBuffer;		// First byte of data buffer being searched
-	BYTE* hashTable[HASHTABLESIZE];
+	const BYTE* beginBuffer;		/* First byte of data buffer being searched */
+	const BYTE* hashTable[HASHTABLESIZE];
 	selectNextHop_t chainTable[MAXD];
 	segmentTracker_t segments[NBCHARACTERS];
-	BYTE* levelList[MAX_LEVELS];
-	BYTE** trackPtr[NBCHARACTERS];
+	const BYTE* levelList[MAX_LEVELS];
+	const BYTE** trackPtr[NBCHARACTERS];
 	U16 trackStep[NBCHARACTERS];
-} MMC_Data_Structure;
+};  /* typedef'd to MMC_ctx within mmc.h */
 
 
-//************************************************************
-// Macro
-//************************************************************
+/* **********************************************************
+*  Macros
+************************************************************/
 #define HASH_FUNCTION(i)	((i * 2654435761U) >> ((MINMATCH*8)-HASH_LOG))
-#define HASH_VALUE(p)		HASH_FUNCTION(*(U32*)p)
+#define HASH_VALUE(p)		HASH_FUNCTION(MEM_read32(p))
 #define HASH_POINTER(p)		HashTable[HASH_VALUE(p)]
 #define NEXT_TRY(p)			chainTable[(size_t)(p) & MAXD_MASK].nextTry 
 #define LEVEL_UP(p)			chainTable[(size_t)(p) & MAXD_MASK].levelUp
@@ -124,23 +109,21 @@ typedef struct
 #define LEVEL(l)			levelList[(l)&MAX_LEVELS_MASK]
 
 
-//************************************************************
-// Creation & Destruction
-//************************************************************
-void* MMC_Create (char* beginBuffer)
+/* **********************************************************
+*  Object Allocation
+************************************************************/
+MMC_ctx* MMC_Create (const void* beginBuffer)
 {
-	void* mmc = ALLOCATOR(sizeof(MMC_Data_Structure));
+	MMC_ctx* mmc = (MMC_ctx*) ALLOCATOR(sizeof(mmc));
 	MMC_Init (mmc, beginBuffer);
 	return mmc;
 }
 
 
-int MMC_Init (void* MMC_Data, char* beginBuffer)
+size_t MMC_Init (MMC_ctx* MMC, const void* beginBuffer)
 {
-	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
-
-	MMC->beginBuffer = (BYTE*)beginBuffer;
-	MEM_INIT(MMC->hashTable, 0, sizeof(MMC->hashTable));
+	MMC->beginBuffer = (const BYTE*)beginBuffer;
+	MEM_INIT(MMC->hashTable,  0, sizeof(MMC->hashTable));
 	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
 	// Init RLE detector
 	{ 
@@ -151,51 +134,47 @@ int MMC_Init (void* MMC_Data, char* beginBuffer)
 			MMC->segments[c].max = NB_INITIAL_SEGMENTS;
 			MMC->segments[c].start = 0;
 			MMC->segments[c].segments[0].size = -1; 
-			MMC->segments[c].segments[0].position = (BYTE*)beginBuffer - (MAX_DISTANCE+1); 
+			MMC->segments[c].segments[0].position = (const BYTE*)beginBuffer - (MAX_DISTANCE+1); 
 		} 
 	}
-
 	return 1;
 }
 
 
-int MMC_Free (void** MMC_Data)
+size_t MMC_Free (MMC_ctx* ctx)
 {
-	MMC_Data_Structure * MMC = * (MMC_Data_Structure **) MMC_Data;
 	// RLE dynamic structure releasing
 	{ 
 		int c; 
-		for (c=0; c<NBCHARACTERS; c++) FREEMEM(MMC->segments[c].segments);
+		for (c=0; c<NBCHARACTERS; c++) FREEMEM(ctx->segments[c].segments);
 	}
-	FREEMEM(*MMC_Data);
-	*MMC_Data = NULL;
-	return (1);
+	FREEMEM(ctx);
+	return 1;
 }
 
 
-//*********************************************************************
-// Basic Search operations (Greedy / Lazy / Flexible parsing)
-//*********************************************************************
-int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLength, char** matchpos)
+/* *******************************************************************
+*  Basic Search operations (Greedy / Lazy / Flexible parsing)
+*********************************************************************/
+size_t MMC_InsertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_t maxLength, const void** matchpos)
 {
-	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
 	segmentTracker_t * const Segments = MMC->segments;
 	selectNextHop_t * const chainTable = MMC->chainTable;
-	BYTE** const HashTable = MMC->hashTable;
-	BYTE** const levelList = MMC->levelList;
-	BYTE*** const trackPtr = MMC->trackPtr;
+	const BYTE** const HashTable = MMC->hashTable;
+	const BYTE** const levelList = MMC->levelList;
+	const BYTE*** const trackPtr = MMC->trackPtr;
 	U16*   trackStep = MMC->trackStep;
-	const BYTE* const iend = (BYTE*)inputPointer + maxLength;
-	BYTE* ip = (BYTE*)inputPointer;
-	BYTE*  ref;
-	BYTE** gateway;
-	BYTE*  currentP;
+	const BYTE* const iend = (const BYTE*)inputPointer + maxLength;
+	const BYTE* ip = (const BYTE*)inputPointer;
+	const BYTE*  ref;
+	const BYTE** gateway;
+	const BYTE*  currentP;
 	U16	stepNb=0;
 	U32 currentLevel, maxLevel;
 	U32 ml, mlt, nbChars, sequence;
 
 	ml = mlt = nbChars = 0;
-	sequence = *(U32*)ip;
+	sequence = MEM_read32(ip);
 
 	// stream match finder
 	if ((U16)sequence==(U16)(sequence>>16))
@@ -203,7 +182,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 	{
 		BYTE c = (BYTE)sequence;
 		U32 index = Segments[c].start;
-		BYTE* endSegment = ip+MINMATCH;
+		const BYTE* endSegment = ip+MINMATCH;
 
 		while ((*endSegment==c) && (endSegment<iend)) endSegment++; nbChars = endSegment-ip;
 
@@ -213,10 +192,10 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 		{
 			// no "previous" segment within range
 			NEXT_TRY(ip) = LEVEL_UP(ip) = 0;    
-			if (nbChars==MINMATCH) MMC_Insert1(MMC, (char*)ip);
+			if (nbChars==MINMATCH) MMC_Insert1(MMC, ip);
 			if ((ip>MMC->beginBuffer) && (*(ip-1)==c))         // obvious RLE solution
 			{
-				*matchpos=(char*)ip-1;
+				*matchpos= ip-1;
 				return nbChars;
 			}
 			return 0;
@@ -227,10 +206,10 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 		LEVEL(currentLevel) = ip;
 		gateway = 0; // work around due to erasing
 		LEVEL_UP(ip) = 0;
-		if (*(ip-1)==c) *matchpos = (char*)ip-1; else *matchpos = (char*)ref;     // "basis" to be improved upon
+		if (*(ip-1)==c) *matchpos = ip-1; else *matchpos = ref;     // "basis" to be improved upon
 		if (nbChars==MINMATCH) 
 		{
-			MMC_Insert1(MMC, (char*)ip);
+			MMC_Insert1(MMC, ip);
 			gateway = &LEVEL_UP(ip);
 		}
 		goto _FindBetterMatch;
@@ -247,7 +226,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 	// Collision detection & avoidance
 	while ((ref) && ((ip-ref) < MAX_DISTANCE))
 	{
-		if (*(U32*)ref != sequence)
+		if (MEM_read32(ref) != sequence)
 		{
 			LEVEL(MINMATCH-1) = ref; 
 			ref = NEXT_TRY(ref);
@@ -260,7 +239,7 @@ int MMC_InsertAndFindBestMatch (void* MMC_Data, char* inputPointer, int maxLengt
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*matchpos = (char*)ref; 
+			*matchpos = ref; 
 		}
 
 		// Continue level mlt chain
@@ -327,7 +306,7 @@ _FindBetterMatch:
 			BYTE c = *(ref+currentLevel);
 			if (trackStep[c] == stepNb)								// this wrong character was already met before
 			{
-				BYTE* next = NEXT_TRY(ref);
+				const BYTE* next = NEXT_TRY(ref);
 				*trackPtr[c] = ref;									// linking
 				NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);		// extraction
 				if (LEVEL_UP(ref))
@@ -370,10 +349,10 @@ _continue_same_level:
 			ref = NEXT_TRY(ref);												
 			if (ref == LEVEL_DOWN)
 			{
-				BYTE* currentP = LEVEL(currentLevel);
-				BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
-				NEXT_TRY(currentP) = 0;							// Erase the LEVEL_DOWN
-				while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next);}
+				const BYTE* localCurrentP = LEVEL(currentLevel);
+				const BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
+				NEXT_TRY(localCurrentP) = 0;							// Erase the LEVEL_DOWN
+				while (next>localCurrentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next);}
 				ref = next;
 				currentLevel--; stepNb++;
 			}
@@ -384,7 +363,7 @@ _continue_same_level:
 		if (mlt>ml)
 		{
 			ml = mlt; 
-			*matchpos = (char*)ref; 
+			*matchpos = ref; 
 		}
 
 		// placing into corresponding chain
@@ -407,7 +386,7 @@ _check_mmc_levelup:
 				NEXT_TRY(currentP) = 0;							// promotion to level mlt; note that LEVEL_UP(ref)=0;
 				if (ref == LEVEL_DOWN)
 				{
-					BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
+					const BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
 					NEXT_TRY(LEVEL(currentLevel)) = 0;			// Erase the LEVEL_DOWN (which has been transfered)
 					while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next); }
 					ref = next;
@@ -463,22 +442,22 @@ _check_mmc_levelup:
 }
 
 
-__inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
+static U32 MMC_Insert (MMC_ctx* MMC, const void* ptr, size_t max)
 {
-	MMC_Data_Structure * MMC = (MMC_Data_Structure *) MMC_Data;
 	segmentTracker_t * Segments = MMC->segments;
 	selectNextHop_t * chainTable = MMC->chainTable;
-	BYTE** HashTable = MMC->hashTable;
-	BYTE* iend = ip+max;
-	BYTE* beginBuffer = MMC->beginBuffer;
+	const BYTE** HashTable = MMC->hashTable;
+	const BYTE* ip = (const BYTE*)ptr;
+	const BYTE* iend = ip+max;
+	const BYTE* beginBuffer = MMC->beginBuffer;
 
 	// Stream updater
-	if ((*(U16*)ip == *(U16*)(ip+2)) && (*ip == *(ip+1)))
+	if ((MEM_read16(ip) == MEM_read16(ip+2)) && (*ip == *(ip+1)))
 	{
 		BYTE c=*ip;
 		U32 nbForwardChars, nbPreviousChars, segmentSize, n=MINMATCH;
-		BYTE* endSegment = ip+MINMATCH;
-		BYTE* baseStreamP = ip;
+		const BYTE* endSegment = ip+MINMATCH;
+		const BYTE* baseStreamP = ip;
 
 		iend += MINMATCH;
 		while ((*endSegment==c) && (endSegment<iend)) endSegment++; 
@@ -535,16 +514,16 @@ __inline static U32 MMC_Insert (void* MMC_Data, BYTE* ip, U32 max)
 }
 
 
-int MMC_Insert1 (void* MMC_Data, char* inputPointer)
+size_t MMC_Insert1 (MMC_ctx* ctx, const void* inputPointer)
 {
-	MMC_Insert (MMC_Data, (BYTE*)inputPointer, 1);
+	MMC_Insert (ctx, inputPointer, 1);
 	return 1;
 }
 
-int MMC_InsertMany (void* MMC_Data, char* inputPointer, int length)
+size_t MMC_InsertMany (MMC_ctx* ctx, const void* inputPointer, size_t length)
 {
-	int done=0;
-	while  (done<length) done += MMC_Insert (MMC_Data, (BYTE*)(inputPointer+done), length-done);
+	size_t done = 0;
+	while  (done<length) done += MMC_Insert (ctx, (const BYTE*)(inputPointer+done), length-done);
 	return length;
 }
 
