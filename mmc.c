@@ -45,7 +45,7 @@
 #define DICTIONARY_LOGSIZE 16		// Dictionary Size as a power of 2 (ex : 2^16 = 64K)
 									// Total RAM allocated is 10x Dictionary (ex : Dictionary 64K ==> 640K)
 
-#define MAXD (1<<DICTIONARY_LOGSIZE)
+#define MAXD (1 << DICTIONARY_LOGSIZE)
 #define MAXD_MASK ((U32)(MAXD - 1))
 #define MAX_DISTANCE (MAXD - 1)
 
@@ -94,7 +94,7 @@ struct MMC_ctx_s
 	const BYTE* levelList[MAX_LEVELS];
 	const BYTE** trackPtr[NBCHARACTERS];
 	U16 trackStep[NBCHARACTERS];
-};  /* typedef'd to MMC_ctx within mmc.h */
+};  /* typedef'd to MMC_ctx within "mmc.h" */
 
 
 /* **********************************************************
@@ -114,17 +114,16 @@ struct MMC_ctx_s
 ************************************************************/
 MMC_ctx* MMC_Create (const void* beginBuffer)
 {
-	MMC_ctx* mmc = (MMC_ctx*) ALLOCATOR(sizeof(mmc));
+	MMC_ctx* mmc = (MMC_ctx*) ALLOCATOR(sizeof(MMC_ctx));
 	MMC_Init (mmc, beginBuffer);
 	return mmc;
 }
 
-
 size_t MMC_Init (MMC_ctx* MMC, const void* beginBuffer)
 {
 	MMC->beginBuffer = (const BYTE*)beginBuffer;
-	MEM_INIT(MMC->hashTable,  0, sizeof(MMC->hashTable));
 	MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
+	MEM_INIT(MMC->hashTable,  0, sizeof(MMC->hashTable));
 	// Init RLE detector
 	{ 
 		int c; 
@@ -523,7 +522,7 @@ size_t MMC_Insert1 (MMC_ctx* ctx, const void* inputPointer)
 size_t MMC_InsertMany (MMC_ctx* ctx, const void* inputPointer, size_t length)
 {
 	size_t done = 0;
-	while  (done<length) done += MMC_Insert (ctx, (const BYTE*)(inputPointer+done), length-done);
+	while  (done<length) done += MMC_Insert (ctx, (const BYTE*)(inputPointer) + done, length-done);
 	return length;
 }
 
