@@ -15,12 +15,12 @@
 
     You should have received a copy of the GNU Lesser General Public License along
     with this program; if not, see <http://www.gnu.org/licenses/>,
-	or write to the Free Software Foundation, Inc.,
+    or write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-	You can contact the author at :
-	- MMC homepage : http://fastcompression.blogspot.com/p/mmc-morphing-match-chain.html
-	- MMC source repository : https://github.com/Cyan4973/mmc
+    You can contact the author at :
+    - MMC homepage : http://fastcompression.blogspot.com/p/mmc-morphing-match-chain.html
+    - MMC source repository : https://github.com/Cyan4973/mmc
 */
 
 #ifndef MMC_H
@@ -41,42 +41,34 @@ extern "C" {
 ************************************************************/
 typedef struct MMC_ctx_s MMC_ctx;   /* incomplete type */
 
-MMC_ctx* MMC_Create (const void* beginBuffer);
-size_t   MMC_Init   (MMC_ctx* ctx, const void* beginBuffer);
-size_t   MMC_Free   (MMC_ctx* ctx);
+MMC_ctx* MMC_create (void);
+size_t   MMC_reset  (MMC_ctx* ctx, const void* beginBuffer);
+size_t   MMC_free   (MMC_ctx* ctx);
 
 /**
-MMC_Create : (Note : Dictionary Size is a compilation directive !)
-			BYTE* startBuffer : first byte of data buffer being searched
-			return : Pointer to MMC Data Structure; NULL = error
-MMC_Init : reset MMC_Data; 
-			Note : MMC_Init is automatically called within MMC_Create, so this is only useful for later initializations;
-			return : 1 = OK; 0 = error; 
-MMC_Free : free memory from MMC Data Structure; caution : pointer MMC_Data must be valid !
-			return : 1+ = OK; 0 = error;
+MMC_create : (Note : Dictionary Size is a compilation directive !)
+            BYTE* startBuffer : first byte of data buffer being searched
+            return : Pointer to MMC Data Structure; NULL = error
+MMC_reset : reset MMC_Data;
+            Note : MMC_Init is automatically called within MMC_Create, so this is only useful for later initializations;
+            return : 1 = OK; 0 = error;
+MMC_free : free memory from MMC Data Structure; caution : pointer MMC_Data must be valid !
+            return : 1+ = OK; 0 = error;
 */
 
 /* ***********************************************************
-*  Search operations (Greedy / Lazy / Flexible parsing)
+*  Search operations
 *************************************************************/
 
-size_t MMC_InsertAndFindBestMatch (MMC_ctx* ctx, const void* inputPointer, size_t maxLength, const void** matchpos);
-size_t MMC_Insert1    (MMC_ctx* ctx, const void* inputPointer);
-size_t MMC_InsertMany (MMC_ctx* ctx, const void* inputPointer, size_t length);
+size_t MMC_insertAndFindBestMatch (MMC_ctx* ctx, const void* inputPointer, size_t maxLength, const void** matchpos);
 
 /**
-MMC_InsertAndFindBestMatch :
-	inputPointer : position being inserted & searched
-	maxLength : maximum match length autorized
-	return : length of Best Match
-			if return == 0, no match was found
-			if return > 0, match position is stored into *matchpos
-MMC_Insert1 :
-		inputPointer : position being inserted
-		return : 1+ = Nb of bytes inserted; 0 = error;
-MMC_InsertMany :
-		inputPointer : start of segment being inserted
-		return : 1+ = Nb of bytes inserted; 0 = error; 
+MMC_insertAndFindBestMatch :
+    @inputPointer : position being inserted & searched
+    @maxLength : maximum match length autorized
+    @return : length of Best Match
+            if return == 0, no match was found
+            if return > 0, match position is stored into *matchpos
 */
 
 
