@@ -1,7 +1,9 @@
 /*
     MMC (Morphing Match Chain)
     Match Finder
-    Copyright (C) Yann Collet 2010-2011
+    Copyright (C) Yann Collet 2010-present
+
+    License : GNU L-GPLv3
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -41,19 +43,18 @@ extern "C" {
 ************************************************************/
 typedef struct MMC_ctx_s MMC_ctx;   /* incomplete type */
 
-MMC_ctx* MMC_create (void);
-size_t   MMC_reset  (MMC_ctx* ctx, const void* beginBuffer);
-size_t   MMC_free   (MMC_ctx* ctx);
+MMC_ctx* MMC_create(void);
+size_t   MMC_init  (MMC_ctx* ctx, const void* beginBuffer);
+void     MMC_free  (MMC_ctx* ctx);
 
 /**
-MMC_create : (Note : Dictionary Size is a compilation directive !)
-            BYTE* startBuffer : first byte of data buffer being searched
-            return : Pointer to MMC Data Structure; NULL = error
-MMC_reset : reset MMC_Data;
-            Note : MMC_Init is automatically called within MMC_Create, so this is only useful for later initializations;
-            return : 1 = OK; 0 = error;
-MMC_free : free memory from MMC Data Structure; caution : pointer MMC_Data must be valid !
-            return : 1+ = OK; 0 = error;
+MMC_create : create an MMC object to search matches into a single continuous bufferSize
+             up to a distance of WindowSize (Note : WindowSize is a compile-time constant).
+             @return : Pointer to MMC Data Structure; NULL = error
+MMC_init   : prepare MMC object to start searching from position beginBuffer;
+             @return : 0 on success, 1 on error.
+MMC_free   : free memory from MMC Data Structure;
+             ctx must be NULL of valid.
 */
 
 /* ***********************************************************

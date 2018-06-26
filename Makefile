@@ -79,7 +79,9 @@ libmmc: mmc.c
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT_MAJOR)
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT)
 
+example: example.o mmc.o
+	$(CC) $(FLAGS) $^ -o $@
+
 clean:
 	@rm -f core *.o *.a *.$(SHARED_EXT) *.$(SHARED_EXT).* libmmc.pc
 	@echo Cleaning completed
-

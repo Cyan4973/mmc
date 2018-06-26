@@ -1,7 +1,9 @@
 /*
     MMC (Morphing Match Chain)
     Match Finder
-    Copyright (C) Yann Collet 2010-2011
+    Copyright (C) Yann Collet 2010-present
+
+    License : GNU L-GPLv3
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -20,7 +22,7 @@
 
     You can contact the author at :
     - MMC homepage : http://fastcompression.blogspot.com/p/mmc-morphing-match-chain.html
-    - MMC source repository : http://code.google.com/p/mmc/
+    - MMC source repository : https://github.com/Cyan4973/mmc
 */
 
 /* **********************************************************
@@ -33,17 +35,17 @@
 #include <string.h>
 #define MEM_INIT memset
 
-#include "mmc.h"
 #include "mem.h"   /* basic types and mem access */
+#include "mmc.h"
 
 
 
 /* ***********************************************************
 *  Constants
 ************************************************************/
-#define MINMATCH 4                   // Note : for the time being, this cannot be changed
-#define DICTIONARY_LOGSIZE 16        // Dictionary Size as a power of 2 (ex : 2^16 = 64K)
-                                     // Total RAM allocated is 10x Dictionary (ex : Dictionary 64K ==> 640K)
+#define MINMATCH 4              /* Note : for the time being, this cannot be changed */
+#define DICTIONARY_LOGSIZE 16   /* Dictionary Size as a power of 2 (ex : 2^16 = 64K) */
+                                /* Total RAM allocated is 10x Dictionary (ex : Dictionary 64K ==> 640K) */
 
 #define MAXD (1 << DICTIONARY_LOGSIZE)
 #define MAXD_MASK ((U32)(MAXD - 1))
@@ -61,6 +63,23 @@
 #define NB_INITIAL_SEGMENTS 16
 
 #define LEVEL_DOWN ((BYTE*)1)
+
+
+/* **********************************************************
+*  Debugging capability
+************************************************************/
+/* DEBUGLEVEL can be defined externally,
+ * typically through compiler command line.
+ * Value must be a number. */
+#ifndef DEBUGLEVEL
+#  define DEBUGLEVEL 0
+#endif
+
+#if (DEBUGLEVEL>=1)
+#  include <assert.h>
+#else
+#  define assert(condition) ((void)0)   /* disable assert (default) */
+#endif
 
 
 /* **********************************************************
@@ -116,37 +135,37 @@ MMC_ctx* MMC_create (void)
     return (MMC_ctx*) ALLOCATOR(sizeof(MMC_ctx));
 }
 
-size_t MMC_reset (MMC_ctx* MMC, const void* beginBuffer)
+size_t MMC_init(MMC_ctx* MMC, const void* beginBuffer)
 {
     MMC->beginBuffer = (const BYTE*)beginBuffer;
     MMC->lastPosInserted = MMC->beginBuffer;
     MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
     MEM_INIT(MMC->hashTable,  0, sizeof(MMC->hashTable));
-    // Init RLE detector
+    /* Init RLE detector */
     {
         int c;
         for (c=0; c<NBCHARACTERS; c++)
         {
-            MMC->segments[c].segments = (segmentInfo_t *) REALLOCATOR(MMC->segments[c].segments, NB_INITIAL_SEGMENTS * sizeof(segmentInfo_t));
+            segmentInfo_t* const newSegment = REALLOCATOR(MMC->segments[c].segments, NB_INITIAL_SEGMENTS * sizeof(segmentInfo_t));
+            if (newSegment == NULL) return 1;   /* realloc failed : existing segment is preserved */
+            MMC->segments[c].segments = newSegment;
             MMC->segments[c].max = NB_INITIAL_SEGMENTS;
             MMC->segments[c].start = 0;
             MMC->segments[c].segments[0].size = -1;
             MMC->segments[c].segments[0].position = (const BYTE*)beginBuffer - (MAX_DISTANCE+1);
         }
     }
-    return 1;
+    return 0;
 }
 
 
-size_t MMC_free (MMC_ctx* ctx)
+void MMC_free (MMC_ctx* ctx)
 {
-    // RLE dynamic structure releasing
-    {
-        int c;
-        for (c=0; c<NBCHARACTERS; c++) FREEMEM(ctx->segments[c].segments);
-    }
+    int c;
+    if (ctx==NULL) return;  /* compatible free on NULL */
+    for (c=0; c<NBCHARACTERS; c++)   /* RLE list release */
+        FREEMEM(ctx->segments[c].segments);
     FREEMEM(ctx);
-    return 1;
 }
 
 
@@ -155,35 +174,33 @@ size_t MMC_free (MMC_ctx* ctx)
 *********************************************************************/
 static U32 MMC_hash(U32 u) { return (u * 2654435761U) >> (32-HASH_LOG); }
 
-static void MMC_insert (MMC_ctx* ctx, const void* targetPtr);
+static void MMC_lazyUpdate (MMC_ctx* ctx, const void* targetPtr);
 
 size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_t maxLength, const void** matchpos)
 {
-    segmentTracker_t * const Segments = MMC->segments;
-    selectNextHop_t * const chainTable = MMC->chainTable;
+    segmentTracker_t* const Segments = MMC->segments;
+    selectNextHop_t* const chainTable = MMC->chainTable;
     const BYTE** const HashTable = MMC->hashTable;
     const BYTE** const levelList = MMC->levelList;
-    const BYTE*** const trackPtr = MMC->trackPtr;
+    const BYTE*** const trackPtr = MMC->trackPtr;   /* achievement unlocked : triple star programmer */
     U16* trackStep = MMC->trackStep;
-    const BYTE* ip = (const BYTE*)inputPointer;
+    const BYTE* const ip = (const BYTE*)inputPointer;
     const BYTE* const iend = ip + maxLength;
     const BYTE*  ref;
     const BYTE** gateway;
     const BYTE*  currentP;
     U16 stepNb=0;
     U32 currentLevel, maxLevel;
-    U32 ml, mlt, nbChars, sequence;
+    U32 ml=0, mlt=0, nbChars=0;
+    U32 const sequence = MEM_read32(ip);
 
-    MMC_insert(MMC, ip);
-
-    ml = mlt = nbChars = 0;
-    sequence = MEM_read32(ip);
+    MMC_lazyUpdate(MMC, ip);   /* catch up history */
 
     /* rle match finder */
     if (   ((U16)sequence==(U16)(sequence>>16))
-        && ((BYTE)sequence == (BYTE)(sequence>>8)) )
+        && ((BYTE)sequence == (BYTE)(sequence>>8)) )   /* 4 identical bytes */
     {
-        BYTE c = (BYTE)sequence;
+        BYTE const c = (BYTE)sequence;
         U32 index = Segments[c].start;
         const BYTE* endSegment = ip+MINMATCH;
 
@@ -276,7 +293,7 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
             NEXT_TRY(LEVEL(MINMATCH)) = ref;
             break;
         }
-        ref=NEXT_TRY(ref);
+        ref = NEXT_TRY(ref);
         NEXT_TRY(currentP) = 0;                             // initialisation, due to promotion; note that LEVEL_UP(ref)=0;
     }
 
@@ -301,7 +318,7 @@ _FindBetterMatch:
         /* First case : No improvement => continue on current chain */
         if (mlt==currentLevel)
         {
-            BYTE c = *(ref+currentLevel);
+            BYTE const c = *(ref+currentLevel);
             if (trackStep[c] == stepNb)                               // this wrong character was already met before
             {
                 const BYTE* next = NEXT_TRY(ref);
@@ -332,11 +349,11 @@ _FindBetterMatch:
             }
 
             /* first time we see this character */
-            if (LEVEL_UP(ref)==0)   // don't interfere if a serie has already started...
-                // Note : to "catch up" the serie, it would be necessary to scan it, up to its last element
-                // this effort would be useless if the chain is complete
-                // Alternatively : we could keep that gw in memory, then scan the chain when finding it is not complete.
-                // But would it be worth it ??
+            if (LEVEL_UP(ref)==0)   /* don't interfere if a serie has already started...
+                * Note : to "catch up" the serie, it would be necessary to scan it, up to its last element.
+                * This effort would be useless if the chain is complete.
+                * Alternatively : we could keep that gw in memory, then scan the chain when finding it is not complete.
+                * But would it be worth it ??  */
             {
                 trackStep[c] = stepNb;
                 trackPtr[c] = &(LEVEL_UP(ref));
@@ -401,7 +418,7 @@ _check_mmc_levelup:
         {
             *gateway = ref;
             maxLevel++;
-            LEVEL(maxLevel) = ref;                               // First element of level max
+            LEVEL(maxLevel) = ref;            /* First element of level max */
             if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
             goto _check_mmc_levelup;
         }
@@ -418,26 +435,21 @@ _check_mmc_levelup:
         {
             LEVEL(currentLevel) = ref;
             ref = LEVEL_UP(ref);
-            maxLevel++;
-            currentLevel++; stepNb++;
+            maxLevel++; currentLevel++; stepNb++;
             continue;
         }
 
         /* Special case : mlt>maxLevel, but no gw; Note that we don't know about level_up yet */
-        {
-            gateway = &(LEVEL_UP(ref));
-            NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;   /* Completing chain of maxLevel */
-            goto _check_mmc_levelup;
-        }
+        gateway = &(LEVEL_UP(ref));
+        NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;   /* Completing chain of maxLevel */
+        goto _check_mmc_levelup;
 
     }
 
     if (gateway) *gateway=ip-MAX_DISTANCE-1;    /* early end trick */
     stepNb++;
 
-    /* prevent match beyond buffer */
-    if ((ip+ml)>iend) ml = iend-ip;
-
+    assert(ml <= maxLength);   /* prevent match beyond buffer */
     return ml;
 }
 
@@ -451,10 +463,11 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
     const BYTE* iend = ip+max;
     const BYTE* beginBuffer = MMC->beginBuffer;
 
-    /* Stream updater */
-    if ((MEM_read16(ip) == MEM_read16(ip+2)) && (*ip == *(ip+1)))
+    /* RLE updater */
+    if ( (MEM_read16(ip) == MEM_read16(ip+2))
+      && (*ip == *(ip+1)) )   /* 4 identical bytes */
     {
-        BYTE c = *ip;
+        BYTE const c = *ip;
         U32 nbForwardChars, nbPreviousChars, segmentSize, n=MINMATCH;
         const BYTE* endSegment = ip+MINMATCH;
         const BYTE* baseStreamP = ip;
@@ -491,16 +504,18 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
         /* overflow protection : new segment smaller than previous, but too many segments in memory */
         if (Segments[c].start > Segments[c].max-2)
         {
-            int beginning=0;
-            U32 i;
+            segmentInfo_t* newSegment = REALLOCATOR (Segments[c].segments, (Segments[c].max * 2) * sizeof(segmentInfo_t));
+            U32 beginning=0;
 
+            if (newSegment == NULL) return 0;  /* allocation failed : we stop search here. Ideally, it should be an error, rather than a soft "end of search" */
             Segments[c].max *= 2;
-            Segments[c].segments = (segmentInfo_t *) REALLOCATOR (Segments[c].segments, (Segments[c].max)*sizeof(segmentInfo_t));
-            while (Segments[c].segments[beginning].position < (ip-MAX_DISTANCE)) beginning++;
-            i = beginning;
-            while (i<=Segments[c].start) { Segments[c].segments[i - (beginning-1)] = Segments[c].segments[i]; i++; }
+            Segments[c].segments = newSegment;
+            /* transfer still valid positions (within window size) towards beginning of buffer */
+            while (newSegment[beginning].position < (ip-MAX_DISTANCE)) beginning++;
+            {   U32 u; for (u = beginning; u <= Segments[c].start; u++) {
+                    newSegment[u - (beginning-1)] = newSegment[u];
+            }   }
             Segments[c].start -= (beginning-1);
-
         }
         Segments[c].start++;
         Segments[c].segments[Segments[c].start].position = endSegment;
@@ -511,18 +526,16 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
 
     /* Normal update */
     NEXT_TRY(ip) = HashTable[HASH_VALUE(ip)];
-    LEVEL_UP(ip)=0;
+    LEVEL_UP(ip) = 0;
     HashTable[HASH_VALUE(ip)] = ip;
 
     return 1;
 }
 
 
-static void MMC_insert (MMC_ctx* ctx, const void* targetPtr)
+static void MMC_lazyUpdate (MMC_ctx* ctx, const void* targetPtr)
 {
     const BYTE* current = ctx->lastPosInserted;
     while  (current<(const BYTE*)targetPtr) current += MMC_insert_once (ctx, current, ((const BYTE*)targetPtr) - current);
     ctx->lastPosInserted = targetPtr;
 }
-
-
