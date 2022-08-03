@@ -85,20 +85,17 @@
 /* **********************************************************
 *  Local Types
 ************************************************************/
-typedef struct
-{
+typedef struct {
     const BYTE* levelUp;
     const BYTE* nextTry;
-}selectNextHop_t;
+} selectNextHop_t;
 
-typedef struct
-{
+typedef struct {
     const BYTE* position;
     U32   size;
 } segmentInfo_t;
 
-typedef struct
-{
+typedef struct {
     segmentInfo_t * segments;
     U16 start;
     U16 max;
@@ -142,10 +139,8 @@ size_t MMC_init(MMC_ctx* MMC, const void* beginBuffer)
     MEM_INIT(MMC->chainTable, 0, sizeof(MMC->chainTable));
     MEM_INIT(MMC->hashTable,  0, sizeof(MMC->hashTable));
     /* Init RLE detector */
-    {
-        int c;
-        for (c=0; c<NBCHARACTERS; c++)
-        {
+    {   int c;
+        for (c=0; c<NBCHARACTERS; c++) {
             segmentInfo_t* const newSegment = REALLOCATOR(MMC->segments[c].segments, NB_INITIAL_SEGMENTS * sizeof(segmentInfo_t));
             if (newSegment == NULL) return 1;   /* realloc failed : existing segment is preserved */
             MMC->segments[c].segments = newSegment;
@@ -153,8 +148,7 @@ size_t MMC_init(MMC_ctx* MMC, const void* beginBuffer)
             MMC->segments[c].start = 0;
             MMC->segments[c].segments[0].size = -1;
             MMC->segments[c].segments[0].position = (const BYTE*)beginBuffer - (MAX_DISTANCE+1);
-        }
-    }
+    }   }
     return 0;
 }
 
@@ -174,7 +168,7 @@ void MMC_free (MMC_ctx* ctx)
 *********************************************************************/
 static U32 MMC_hash(U32 u) { return (u * 2654435761U) >> (32-HASH_LOG); }
 
-static void MMC_lazyUpdate (MMC_ctx* ctx, const void* targetPtr);
+static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max);
 
 size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_t maxLength, const void** matchpos)
 {
@@ -182,24 +176,21 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
     selectNextHop_t* const chainTable = MMC->chainTable;
     const BYTE** const HashTable = MMC->hashTable;
     const BYTE** const levelList = MMC->levelList;
-    const BYTE*** const trackPtr = MMC->trackPtr;   /* achievement unlocked : triple star programmer */
-    U16* trackStep = MMC->trackStep;
+    const BYTE*** const trackPtr = MMC->trackPtr;
+    U16* const trackStep = MMC->trackStep;
+    const BYTE* const iend = (const BYTE*)inputPointer + maxLength;
     const BYTE* const ip = (const BYTE*)inputPointer;
-    const BYTE* const iend = ip + maxLength;
     const BYTE*  ref;
     const BYTE** gateway;
-    const BYTE*  currentP;
     U16 stepNb=0;
     U32 currentLevel, maxLevel;
     U32 ml=0, mlt=0, nbChars=0;
+
     U32 const sequence = MEM_read32(ip);
 
-    MMC_lazyUpdate(MMC, ip);   /* catch up history */
-
-    /* rle match finder */
-    if (   ((U16)sequence==(U16)(sequence>>16))
-        && ((BYTE)sequence == (BYTE)(sequence>>8)) )   /* 4 identical bytes */
-    {
+    // RLE match finder (special case)
+    if ( (U16)sequence == (U16)(sequence>>16)
+      && (BYTE)sequence == (BYTE)(sequence>>8) ) {
         BYTE const c = (BYTE)sequence;
         U32 index = Segments[c].start;
         const BYTE* endSegment = ip+MINMATCH;
@@ -209,12 +200,13 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
 
         while (Segments[c].segments[index].size < nbChars) index--;
 
-        if ((Segments[c].segments[index].position - nbChars) <= (ip - MAX_DISTANCE))
+        if ((Segments[c].segments[index].position - nbChars) <= (ip - MAX_DISTANCE))      // no large enough previous serie within range
         {
-            /* no "previous" segment within range */
+            // no "previous" segment within range
             NEXT_TRY(ip) = LEVEL_UP(ip) = 0;
-            if ((ip>MMC->beginBuffer) && (*(ip-1)==c))   /* obvious RLE solution */
-            {
+            if (nbChars==MINMATCH) MMC_insert_once(MMC, ip, iend-ip);
+            if ((ip>MMC->beginBuffer) && (*(ip-1)==c)) {
+                // obvious RLE solution
                 *matchpos= ip-1;
                 return nbChars;
             }
@@ -224,26 +216,27 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
         ref = NEXT_TRY(ip)= Segments[c].segments[index].position - nbChars;
         currentLevel = maxLevel = ml = nbChars;
         LEVEL(currentLevel) = ip;
-        gateway = 0;   // work around due to erasing
+        gateway = 0; // work around due to erasing
         LEVEL_UP(ip) = 0;
         if (*(ip-1)==c) *matchpos = ip-1; else *matchpos = ref;     // "basis" to be improved upon
-        if (nbChars==MINMATCH)
+        if (nbChars==MINMATCH) {
+            MMC_insert_once(MMC, ip, iend-ip);
             gateway = &LEVEL_UP(ip);
+        }
         goto _FindBetterMatch;
     }
 
-    /* MMC match finder */
+    // MMC match finder
     ref = HashTable[MMC_hash(sequence)];
+    ADD_HASH(ip);
     if (!ref) return 0;
     gateway = &LEVEL_UP(ip);
     currentLevel = maxLevel = MINMATCH-1;
     LEVEL(MINMATCH-1) = ip;
 
     // Collision detection & avoidance
-    while ((ref) && ((ip-ref) < MAX_DISTANCE))
-    {
-        if (MEM_read32(ref) != sequence)
-        {
+    while ((ref) && ((ip-ref) < MAX_DISTANCE)) {
+        if (MEM_read32(ref) != sequence) {
             LEVEL(MINMATCH-1) = ref;
             ref = NEXT_TRY(ref);
             continue;
@@ -252,93 +245,82 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
         mlt = MINMATCH;
         while ((mlt<(U32)maxLength) && (*(ip+mlt)) == *(ref+mlt)) mlt++;
 
-        if (mlt>ml)
-        {
+        if (mlt > ml) {
             ml = mlt;
             *matchpos = ref;
         }
 
         // Continue level mlt chain
-        if (mlt<=maxLevel)
-        {
+        if (mlt <= maxLevel) {
             NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;    // Completing chain at Level mlt
         }
 
         // New level creation
-        else
-        {
-            if (gateway)            // Only guaranteed the first time (gateway is ip)
-            {
+        else {
+            if (gateway) {
+                // Only guaranteed the first time (gateway is ip)
                 maxLevel++;
                 *gateway = ref;
                 LEVEL(maxLevel)=ref;                        // First element of level maxLevel
                 if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
             }
 
-            // Special case : no gwTo+1, but mlt>maxLevel
-            else
-            {
+            // Special case : no gateway, but mlt>maxLevel
+            else {
                 gateway = &(LEVEL_UP(ref));
-                NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;        // Completing chain at Level maxLevel
+                NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;  // Completing chain at Level maxLevel
             }
         }
 
-        currentP = ref;
-        NEXT_TRY(LEVEL(MINMATCH-1)) = NEXT_TRY(ref);        // Extraction from base level
-        if (LEVEL_UP(ref))
-        {
-            ref=LEVEL_UP(ref);
-            NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;    // Clean, because extracted
-            currentLevel++;
-            NEXT_TRY(LEVEL(MINMATCH)) = ref;
-            break;
-        }
-        ref = NEXT_TRY(ref);
-        NEXT_TRY(currentP) = 0;                             // initialisation, due to promotion; note that LEVEL_UP(ref)=0;
-    }
+        {   const BYTE* currentP = ref;
+            NEXT_TRY(LEVEL(MINMATCH-1)) = NEXT_TRY(ref);      // Extraction from base level
+            if (LEVEL_UP(ref)) {
+                ref = LEVEL_UP(ref);
+                NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;  // Clean, because extracted
+                currentLevel++;
+                NEXT_TRY(LEVEL(MINMATCH)) = ref;
+                break;
+            }
+            ref = NEXT_TRY(ref);
+            NEXT_TRY(currentP) = 0;                           // initialisation, due to promotion; note that LEVEL_UP(ref)==0;
+    }    }
 
-    if (ml==0) return 0;  /* no match found */
+    if (ml == 0) return 0;  // no match found
 
 
+    // looking for better length of match
 _FindBetterMatch:
-    while ((ref) && ((ip-ref) < MAX_DISTANCE))
-    {
-        /* Reset rolling counter for Secondary Promotions */
-        if (!stepNb)
-        {
+    while ((ref) && ((ip-ref) < MAX_DISTANCE)) {
+        // Reset rolling counter for Secondary Promotions
+        if (!stepNb) {
             U32 i;
             for (i=0; i<NBCHARACTERS; i++) trackStep[i]=0;
             stepNb=1;
         }
 
-        /* Match Count */
+        // Match Count
         mlt = currentLevel;
         while ((mlt<(U32)maxLength) && (*(ip+mlt)) == *(ref+mlt)) mlt++;
 
-        /* First case : No improvement => continue on current chain */
-        if (mlt==currentLevel)
-        {
-            BYTE const c = *(ref+currentLevel);
-            if (trackStep[c] == stepNb)                               // this wrong character was already met before
-            {
+        // First case : No improvement => continue on current chain
+        if (mlt==currentLevel) {
+            BYTE c = *(ref+currentLevel);
+            if (trackStep[c] == stepNb) {
+                // this wrong character was already met before
                 const BYTE* next = NEXT_TRY(ref);
-                *trackPtr[c] = ref;                                   // linking
-                NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);        // extraction
-                if (LEVEL_UP(ref))
-                {
-                    NEXT_TRY(ref) = LEVEL_UP(ref);                    // Promotion
+                *trackPtr[c] = ref;                               // linking
+                NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);    // extraction
+                if (LEVEL_UP(ref)) {
+                    NEXT_TRY(ref) = LEVEL_UP(ref);                // Promotion
                     LEVEL_UP(ref) = 0;
-                    trackStep[c] = 0;                                 // Shutdown chain (avoid overwriting when multiple unfinished chains)
-                }
-                else
-                {
-                    NEXT_TRY(ref) = LEVEL_DOWN;                        // Promotion, but link back to previous level for now
-                    trackPtr[c] = &(NEXT_TRY(ref));                    // saving for next link
+                    trackStep[c] = 0;                             // Shutdown chain (avoid overwriting when multiple unfinished chains)
+                } else {
+                    NEXT_TRY(ref) = LEVEL_DOWN;                   // Promotion, but link back to previous level for now
+                    trackPtr[c] = &(NEXT_TRY(ref));               // saving for next link
                 }
 
-                if (next==LEVEL_DOWN)
-                {
-                    NEXT_TRY(LEVEL(currentLevel)) = 0;                 // Erase the LEVEL_DOWN
+                if (next==LEVEL_DOWN) {
+                    NEXT_TRY(LEVEL(currentLevel)) = 0;                // Erase the LEVEL_DOWN
                     currentLevel--; stepNb++;
                     next = NEXT_TRY(LEVEL(currentLevel));
                     while (next > ref) { LEVEL(currentLevel) = next; next = NEXT_TRY(next); }
@@ -348,12 +330,12 @@ _FindBetterMatch:
                 continue;
             }
 
-            /* first time we see this character */
-            if (LEVEL_UP(ref)==0)   /* don't interfere if a serie has already started...
-                * Note : to "catch up" the serie, it would be necessary to scan it, up to its last element.
-                * This effort would be useless if the chain is complete.
-                * Alternatively : we could keep that gw in memory, then scan the chain when finding it is not complete.
-                * But would it be worth it ??  */
+            // first time we see this character
+            if (LEVEL_UP(ref)==0)   // don't interfere if a serie has already started...
+                // Note : to "catch up" the serie, it would be necessary to scan it, up to its last element
+                // this effort would be useless if the chain is complete
+                // Alternatively : we could keep that gateway in memory, and scan the chain on finding that it is not complete.
+                // But would it be worth it ??
             {
                 trackStep[c] = stepNb;
                 trackPtr[c] = &(LEVEL_UP(ref));
@@ -362,8 +344,7 @@ _FindBetterMatch:
 _continue_same_level:
             LEVEL(currentLevel) = ref;
             ref = NEXT_TRY(ref);
-            if (ref == LEVEL_DOWN)
-            {
+            if (ref == LEVEL_DOWN) {
                 const BYTE* localCurrentP = LEVEL(currentLevel);
                 const BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
                 NEXT_TRY(localCurrentP) = 0;                            // Erase the LEVEL_DOWN
@@ -374,82 +355,73 @@ _continue_same_level:
             continue;
         }
 
-        /* Now, mlt > currentLevel */
-
-        if (mlt>ml)
-        {
-            /* better solution found */
+        // Now, mlt > currentLevel
+        if (mlt>ml) {
             ml = mlt;
             *matchpos = ref;
         }
 
-        /* store into corresponding chain */
-        if (mlt<=maxLevel)
-        {
+        // placing into corresponding chain
+        if (mlt<=maxLevel) {
             NEXT_TRY(LEVEL(mlt)) = ref; LEVEL(mlt) = ref;        // Completing chain at Level mlt
 _check_mmc_levelup:
-            currentP = ref;
-            NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);       // Extraction from base level
-            if (LEVEL_UP(ref))
-            {
-                ref = LEVEL_UP(ref);                             // LevelUp
-                NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;     // Clean, because extracted
-                currentLevel++; stepNb++;
-                NEXT_TRY(LEVEL(currentLevel)) = ref;             // We don't know yet ref's level, but just in case it would be only ==currentLevel...
-            }
-            else
-            {
-                ref = NEXT_TRY(ref);
-                NEXT_TRY(currentP) = 0;                          // promotion to level mlt; note that LEVEL_UP(ref)=0;
-                if (ref == LEVEL_DOWN)
-                {
-                    const BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
-                    NEXT_TRY(LEVEL(currentLevel)) = 0;           // Erase the LEVEL_DOWN (which has been transfered)
-                    while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next); }
-                    ref = next;
-                    currentLevel--; stepNb++;
+            {   const BYTE* currentP = ref;
+                NEXT_TRY(LEVEL(currentLevel)) = NEXT_TRY(ref);    // Extraction from base level
+                if (LEVEL_UP(ref)) {
+                    ref = LEVEL_UP(ref);                          // LevelUp
+                    NEXT_TRY(currentP) = LEVEL_UP(currentP) = 0;  // Clean, because extracted
+                    currentLevel++; stepNb++;
+                    NEXT_TRY(LEVEL(currentLevel)) = ref;          // We don't know yet ref's level, but just in case it would be only ==currentLevel...
+                } else {
+                    ref = NEXT_TRY(ref);
+                    NEXT_TRY(currentP) = 0;                       // promotion to level mlt; note that LEVEL_UP(ref)=0;
+                    if (ref == LEVEL_DOWN) {
+                        const BYTE* next = NEXT_TRY(LEVEL(currentLevel-1));
+                        NEXT_TRY(LEVEL(currentLevel)) = 0;        // Erase the LEVEL_DOWN (which has been transfered)
+                        while (next>currentP) { LEVEL(currentLevel-1) = next; next = NEXT_TRY(next); }
+                        ref = next;
+                        currentLevel--; stepNb++;
+                    }
                 }
-            }
-            continue;
-        }
+                continue;
+        }    }
 
         // MaxLevel increase
-        if (gateway)
-        {
+        if (gateway) {
             *gateway = ref;
             maxLevel++;
-            LEVEL(maxLevel) = ref;            /* First element of level max */
+            LEVEL(maxLevel) = ref;                                // First element of level max
             if (mlt>maxLevel) gateway=&(LEVEL_UP(ref)); else gateway=0;
             goto _check_mmc_levelup;
         }
 
         // Special case : mlt>maxLevel==currentLevel, no Level_up nor gateway
-        if ((maxLevel==currentLevel) && (!(LEVEL_UP(ref))))
-        {
-            gateway = &(LEVEL_UP(ref));   /* note : *gateway = 0 */
+        if ((maxLevel==currentLevel) && (!(LEVEL_UP(ref)))) {
+            gateway = &(LEVEL_UP(ref));                            // note : *gateway = 0
             goto _continue_same_level;
         }
 
         // Special case : mlt>maxLevel==currentLevel, Level_up available, but no gateway
-        if (maxLevel==currentLevel)
-        {
+        if (maxLevel==currentLevel) {
             LEVEL(currentLevel) = ref;
             ref = LEVEL_UP(ref);
-            maxLevel++; currentLevel++; stepNb++;
+            maxLevel++;
+            currentLevel++; stepNb++;
             continue;
         }
 
-        /* Special case : mlt>maxLevel, but no gw; Note that we don't know about level_up yet */
+        // Special case : mlt>maxLevel, but no gateway; Note that we don't know about level_up yet
         gateway = &(LEVEL_UP(ref));
-        NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;   /* Completing chain of maxLevel */
+        NEXT_TRY(LEVEL(maxLevel)) = ref; LEVEL(maxLevel) = ref;        // Completing chain of maxLevel
         goto _check_mmc_levelup;
-
     }
 
-    if (gateway) *gateway=ip-MAX_DISTANCE-1;    /* early end trick */
+    if (gateway) *gateway=ip-MAX_DISTANCE-1;    // early end trick
     stepNb++;
 
-    assert(ml <= maxLength);   /* prevent match beyond buffer */
+    // prevent match beyond buffer
+    if ((ip+ml)>iend) ml = iend-ip;
+
     return ml;
 }
 
@@ -481,11 +453,9 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
         segmentSize = nbForwardChars + nbPreviousChars;
         if (segmentSize > MAX_DISTANCE-1) segmentSize = MAX_DISTANCE-1;
 
-        while (Segments[c].segments[Segments[c].start].size <= segmentSize)
-        {
+        while (Segments[c].segments[Segments[c].start].size <= segmentSize) {
             if (Segments[c].segments[Segments[c].start].position <= (ip-MAX_DISTANCE)) break;
-            for ( ; n<=Segments[c].segments[Segments[c].start].size ; n++)
-            {
+            for ( ; n<=Segments[c].segments[Segments[c].start].size ; n++) {
                 NEXT_TRY(endSegment-n) = Segments[c].segments[Segments[c].start].position - n;
                 LEVEL_UP(endSegment-n) = 0;
             }
@@ -495,15 +465,13 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
         if (Segments[c].segments[Segments[c].start].position <= (ip-MAX_DISTANCE))
             Segments[c].start = 0;   /* no large enough serie within range */
 
-        for ( ; n<=segmentSize ; n++)
-        {
+        for ( ; n<=segmentSize ; n++) {
             NEXT_TRY(endSegment-n) = Segments[c].segments[Segments[c].start].position - n;
             LEVEL_UP(endSegment-n) = 0;
         }
 
         /* overflow protection : new segment smaller than previous, but too many segments in memory */
-        if (Segments[c].start > Segments[c].max-2)
-        {
+        if (Segments[c].start > Segments[c].max-2) {
             segmentInfo_t* newSegment = REALLOCATOR (Segments[c].segments, (Segments[c].max * 2) * sizeof(segmentInfo_t));
             U32 beginning=0;
 
@@ -530,12 +498,4 @@ static size_t MMC_insert_once (MMC_ctx* MMC, const void* ptr, size_t max)
     HashTable[HASH_VALUE(ip)] = ip;
 
     return 1;
-}
-
-
-static void MMC_lazyUpdate (MMC_ctx* ctx, const void* targetPtr)
-{
-    const BYTE* current = ctx->lastPosInserted;
-    while  (current<(const BYTE*)targetPtr) current += MMC_insert_once (ctx, current, ((const BYTE*)targetPtr) - current);
-    ctx->lastPosInserted = targetPtr;
 }

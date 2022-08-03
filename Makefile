@@ -25,17 +25,17 @@
 
 LIBVER_MAJOR = 0
 LIBVER_MINOR = 2
-LIBVER_PATCH = 0
+LIBVER_PATCH = 1
 LIBVER  = $(LIBVER_MAJOR).$(LIBVER_MINOR).$(LIBVER_PATCH)
 VERSION?= $(LIBVER)
-
-VERSION?= 0.2.0
 
 DESTDIR?=
 PREFIX ?= /usr/local
 CFLAGS ?= -O3  # -falign-loops=32   # not always positive
-CFLAGS += -std=c99 -Wall -Wextra -Wundef -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes
-FLAGS   = $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(MOREFLAGS)
+DEBUGFLAGS = -Wall -Wextra -Wundef -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes
+CFLAGS += $(DEBUGFLAGS)
+CFLAGS += $(MOREFLAGS)
+LDFLAGS += $(MOREFLAGS)
 
 BINDIR  = $(PREFIX)/bin
 MANDIR  = $(PREFIX)/share/man/man1
@@ -79,8 +79,7 @@ libmmc: mmc.c
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT_MAJOR)
 	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT)
 
-example: example.o mmc.o
-	$(CC) $(FLAGS) $^ -o $@
+example: mmc.o
 
 clean:
 	@rm -f core *.o *.a *.$(SHARED_EXT) *.$(SHARED_EXT).* libmmc.pc
