@@ -1,6 +1,9 @@
-# build artefacts
+# build artifacts
 *.o
 *.a
 *.dylib
 *.so.*
 example
+
+#test artifacts
+tmp*

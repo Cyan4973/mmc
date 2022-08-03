@@ -59,6 +59,24 @@ static void FCLOSE(FILE* f)
 
 /* --- example --- */
 
+char printableChar(char c)
+{
+    if (32 <= c && c <= 126) return c;
+    return '.';
+}
+
+/* this function displays printable characters
+ * and replaces all other ones by `.` */
+void printContent(const void* p, size_t l)
+{
+#define PRINT_CONTENT_LENGTH_MAX 80
+    const char* b = p;
+    if (l > PRINT_CONTENT_LENGTH_MAX) l = PRINT_CONTENT_LENGTH_MAX;
+    for (size_t u=0; u<l; u++) {
+        printf("%c", printableChar(b[u]));
+    }
+}
+
 static void printMatches(const void* buffer, size_t size)
 {
     MMC_ctx* const mmc = MMC_create();
@@ -70,9 +88,13 @@ static void printMatches(const void* buffer, size_t size)
     {
         const void* match;
         size_t const length = MMC_insertAndFindBestMatch(mmc, buf+pos, size-pos, &match);
-        if (length > 0)
-            printf("pos %5zu: found match of length %2zu \n", pos, length);
-    }
+        if (length > 0) {
+            assert(match >= buffer);
+            printf("pos%6zu: found match of length%3zu at pos%6zi ( ",
+                    pos, length, (const char*)match - buf);
+            printContent(buf + pos, length);
+            printf(" ) \n");
+    }   }
 
     MMC_free(mmc);
 }
