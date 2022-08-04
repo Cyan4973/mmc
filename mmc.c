@@ -185,8 +185,10 @@ size_t MMC_insertAndFindBestMatch (MMC_ctx* MMC, const void* inputPointer, size_
     U16 stepNb=0;
     U32 currentLevel, maxLevel;
     U32 ml=0, mlt=0, nbChars=0;
+    U32 sequence;
 
-    U32 const sequence = MEM_read32(ip);
+    if (maxLength < 4) return 0;  /* no solution */
+    sequence = MEM_read32(ip);
 
     // RLE match finder (special case)
     if ( (U16)sequence == (U16)(sequence>>16)

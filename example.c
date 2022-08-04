@@ -30,7 +30,7 @@
 /* --- safe variants --- */
 static void* MALLOC(size_t s)
 {
-    void* const buf = malloc(s);
+    void* const buf = calloc(1, s);
     assert(buf != NULL);
     return buf;
 }
@@ -71,8 +71,9 @@ void printContent(const void* p, size_t l)
 {
 #define PRINT_CONTENT_LENGTH_MAX 80
     const char* b = p;
+    size_t u;
     if (l > PRINT_CONTENT_LENGTH_MAX) l = PRINT_CONTENT_LENGTH_MAX;
-    for (size_t u=0; u<l; u++) {
+    for (u=0; u<l; u++) {
         printf("%c", printableChar(b[u]));
     }
 }
@@ -80,14 +81,14 @@ void printContent(const void* p, size_t l)
 static void printMatches(const void* buffer, size_t size)
 {
     MMC_ctx* const mmc = MMC_create();
-    const char* buf = (const char*)buffer;
+    const char* const buf = (const char*)buffer;
     size_t pos = 0;
 
     MMC_init(mmc, buf);
-    for (pos=0; pos<size; pos++)
-    {
+    for (pos=0; pos<size; pos++) {
         const void* match;
-        size_t const length = MMC_insertAndFindBestMatch(mmc, buf+pos, size-pos, &match);
+        size_t const length = MMC_insertAndFindBestMatch(mmc,
+                                buf+pos, size-pos, &match);
         if (length > 0) {
             assert(match >= buffer);
             printf("pos%6zu: found match of length%3zu at pos%6zi ( ",

@@ -1,0 +1,381 @@
+# (documetation) TBD
+
+name: mmc CI
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+  mmc-c-compilers:
+    name: CC=${{ matrix.cc }}, ${{ matrix.os }}
+    strategy:
+      fail-fast: false  # 'false' means Don't stop matrix workflows even if some matrix failed.
+      matrix:
+        include: [
+          # You can access the following values via ${{ matrix.??? }}
+          #
+          #   pkgs    : apt-get package names.  It can include multiple package names which are delimited by space.
+          #   cc      : C compiler executable.
+          #   cxx     : C++ compiler executable for `make ctocpptest`.
+          #   x32     : Set 'true' if compiler supports x32.  Otherwise, set 'false'.
+          #             Set 'fail' if it supports x32 but fails for now.  'fail' cases must be removed.
+          #   x86     : Set 'true' if compiler supports x86 (-m32).  Otherwise, set 'false'.
+          #             Set 'fail' if it supports x86 but fails for now.  'fail' cases must be removed.
+          #   cxxtest : Set 'true' if it can be compiled as C++ code.  Otherwise, set 'false'.
+          #   os      : GitHub Actions YAML workflow label.  See https://github.com/actions/virtual-environments#available-environments
+
+          # cc
+          { pkgs: '',                                                   cc: cc,        cxx: c++,         x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-latest, },
+
+          # gcc
+          { pkgs: '',                                                   cc: gcc,       cxx: g++,         x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-latest, },
+          { pkgs: 'gcc-11 g++-11 lib32gcc-11-dev libx32gcc-11-dev',     cc: gcc-11,    cxx: g++-11,      x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'gcc-10 lib32gcc-10-dev libx32gcc-10-dev',            cc: gcc-10,    cxx: g++-10,      x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'gcc-9  lib32gcc-9-dev  libx32gcc-9-dev',             cc: gcc-9,     cxx: g++-9,       x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'gcc-8 g++-8 lib32gcc-8-dev libx32gcc-8-dev',         cc: gcc-8,     cxx: g++-8,       x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'gcc-7 g++-7 lib32gcc-7-dev libx32gcc-7-dev',         cc: gcc-7,     cxx: g++-7,       x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'gcc-6 g++-6 lib32gcc-6-dev libx32gcc-6-dev',         cc: gcc-6,     cxx: g++-6,       x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-18.04,  },
+          { pkgs: 'gcc-5 g++-5 lib32gcc-5-dev libx32gcc-5-dev',         cc: gcc-5,     cxx: g++-5,       x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-18.04,  },
+          { pkgs: 'gcc-4.8 g++-4.8 lib32gcc-4.8-dev libx32gcc-4.8-dev', cc: gcc-4.8,   cxx: g++-4.8,     x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-18.04,  },
+
+          # clang
+          { pkgs: 'lib32gcc-11-dev libx32gcc-11-dev',                   cc: clang,     cxx: clang++,     x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-latest, },
+          { pkgs: 'clang-12  lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-12,  cxx: clang++-12,  x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-11  lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-11,  cxx: clang++-11,  x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-10  lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-10,  cxx: clang++-10,  x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-9   lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-9,   cxx: clang++-9,   x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-8   lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-8,   cxx: clang++-8,   x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-7   lib32gcc-7-dev  libx32gcc-7-dev',          cc: clang-7,   cxx: clang++-7,   x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-6.0 lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-6.0, cxx: clang++-6.0, x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-20.04,  },
+          { pkgs: 'clang-5.0 lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-5.0, cxx: clang++-5.0, x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-18.04,  },
+          { pkgs: 'clang-4.0 lib32gcc-11-dev libx32gcc-11-dev',         cc: clang-4.0, cxx: clang++-4.0, x32: 'true', x86: 'true', cxxtest: 'true',  os: ubuntu-18.04,  },
+          { pkgs: 'clang-3.9',                                          cc: clang-3.9, cxx: clang++-3.9, x32: 'fail', x86: 'fail', cxxtest: 'false', os: ubuntu-18.04,  },
+        ]
+
+    runs-on: ${{ matrix.os }}
+    env:                        # Set environment variables
+      # We globally set CC and CXX to improve compatibility with .travis.yml
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: apt-get install
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-multilib
+        sudo apt-get install ${{ matrix.pkgs }}
+
+    - name: Environment info
+      run: |
+        echo && type $CC && which $CC && $CC --version
+        echo && type $CXX && which $CXX && $CXX --version
+
+    - name: make
+      if: always()
+      run: make V=1
+
+    - name: make c_standards (C90)
+      if: always()
+      run: |
+          make clean
+          CFLAGS="-std=c90 -Werror" make V=1
+
+    - name: make c_standards (C11)
+      if: always()
+      run: |
+          make clean
+          CFLAGS="-std=c11 -Werror" make V=1
+
+# Note : doesn't work (yet)
+#    - name: make cxxtest
+#      if: ${{ matrix.cxxtest == 'true' }}
+#      run: |
+#          make clean
+#          CC=g++ make V=1
+
+    - name: make example
+      if: always()
+      run: make clean; make V=1 example; ./example README.md
+
+    - name: make clangtest (clang only)
+      if: ${{ startsWith( matrix.cc , 'clang' ) }}
+      run: make clean; CC=clang make V=1
+
+    - name: make -C tests test MOREFLAGS='-mx32'
+      if: ${{ matrix.x32 == 'true' }}
+      run: make clean; LDFLAGS='-Wl,--verbose' MOREFLAGS='-mx32' make -j V=1
+
+
+###############################################################
+# Check tools
+#
+# - scan-build
+# - valgrind
+# - ubsan
+# - asan
+#
+
+  mmc-scan-build:
+    name: make staticAnalyze
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+    - name: apt-get install
+      run: |
+        sudo apt-get update
+        sudo apt-get install clang-tools
+
+    - name: Environment info
+      run: |
+        echo && type gcc && which gcc && gcc --version
+        echo && type clang && which clang && clang --version
+        echo && type scan-build && which scan-build               # scan-build doesn't have any --version equivalent option
+        echo && type make && which make && make -v
+        echo && cat /proc/cpuinfo || echo /proc/cpuinfo is not present
+
+    - name: scan-build
+      run: scan-build --status-bugs -v --force-analyze-debug-code make all
+
+  mmc-valgrind:
+    name: valgrind
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+    - name: apt-get install
+      run: |
+        sudo apt-get update
+        sudo apt-get install valgrind
+
+    - name: Environment info
+      run: |
+        echo && type cc && which cc && cc --version
+        echo && type valgrind && which valgrind && valgrind --version
+
+    - name: valgrind
+      env:
+        CFLAGS: -g
+      run: |
+        make clean
+        make V=1 example
+        valgrind --leak-check=yes --error-exitcode=1 -- ./example README.md
+
+
+  mmc-ubsan-x64:
+    name: Linux x64 ubsan
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: ubsan
+      run: |
+        make clean
+        MOREFLAGS="-fsanitize=undefined -fno-sanitize-recover=undefined" make V=1 example
+        ./example README.md
+
+
+  mmc-ubsan-x86:
+    name: Linux x86 ubsan
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: apt-get install
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-multilib
+        sudo apt-get install lib32gcc-11-dev
+
+    - name: ubsan32
+      env:                        # Set environment variables
+        CFLAGS: -m32
+        MOREFLAGS: -fsanitize=undefined -fno-sanitize-recover=undefined
+      run: |
+        make clean
+        make V=1 example
+        ./example README.md
+
+
+  mmc-asan-x64:
+    name: Linux x64 ASAN
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: asan
+      env:
+        MOREFLAGS: -fsanitize=address
+      run: |
+        make clean
+        make V=1 example
+        ./example README.md
+
+  mmc-msan-x64:
+    name: Linux x64 MSAN
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: msan
+      env:
+        MOREFLAGS: -fsanitize=memory
+        CC: clang
+      run: |
+        make clean
+        make V=1 example
+        ./example README.md
+
+###############################################################
+# Platforms
+#
+# - QEMU (ARM, ARM64, PPC, PPC64LE, S390X)
+# - macOS
+#
+
+  # QEMU
+  # All tests use QEMU (static) and gcc cross compiler.
+  #
+  # note:
+  #   We don't employ completely matrix method which provides `MOREFLAGS`
+  #   etc in the matrix.  Because some platform may need its special
+  #   compiler options and test.
+  #   For example, xxHash already has tests for scalar and SIMD version of
+  #   it.  But compiler options are quite different between platforms.
+  #
+  #   So, please keep them simple and independent.
+  #
+  mmc-qemu-platforms:
+    name: QEMU ${{ matrix.type }}
+    strategy:
+      fail-fast: false  # 'false' means Don't stop matrix workflows even if some matrix instance failed.
+      matrix:
+        include: [
+          # You can access the following values via ${{ matrix.??? }}
+          #   type : Architecture type for `if:` statement.
+          #   pkgs : apt-get package names.  You can include multiple packages which are delimited by space.
+          #   xcc  : gcc cross C compiler executable.
+          #   xemu : QEMU static emulator executable.
+          #   os   : GitHub Actions YAML workflow label.  See https://github.com/actions/virtual-environments#available-environments
+
+          { type: ARM,      pkgs: 'qemu-system-arm   gcc-arm-linux-gnueabi',     xcc: arm-linux-gnueabi-gcc,     xemu: qemu-arm-static,     os: ubuntu-latest, },
+          { type: ARM64,    pkgs: 'qemu-system-arm   gcc-aarch64-linux-gnu',     xcc: aarch64-linux-gnu-gcc,     xemu: qemu-aarch64-static, os: ubuntu-latest, },
+          { type: PPC,      pkgs: 'qemu-system-ppc   gcc-powerpc-linux-gnu',     xcc: powerpc-linux-gnu-gcc,     xemu: qemu-ppc-static,     os: ubuntu-latest, },
+          { type: PPC64LE,  pkgs: 'qemu-system-ppc   gcc-powerpc64le-linux-gnu', xcc: powerpc64le-linux-gnu-gcc, xemu: qemu-ppc64le-static, os: ubuntu-latest, },
+          { type: S390X,    pkgs: 'qemu-system-s390x gcc-s390x-linux-gnu',       xcc: s390x-linux-gnu-gcc,       xemu: qemu-s390x-static,   os: ubuntu-latest, },
+        ]
+
+    runs-on: ${{ matrix.os }}
+    env:                        # Set environment variables
+      XCC: ${{ matrix.xcc }}
+      XEMU: ${{ matrix.xemu }}
+    steps:
+    - uses: actions/checkout@v2 # https://github.com/actions/checkout
+
+    - name: apt-get install
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-multilib
+        sudo apt-get install qemu-utils qemu-user-static
+        sudo apt-get install ${{ matrix.pkgs }}
+
+    - name: Environment info
+      run: |
+        echo && type $XCC && which $XCC && $XCC --version
+        echo && $XCC -v                       # Show built-in specs
+        echo && type $XEMU && which $XEMU && $XEMU --version
+
+    - name: ARM64
+      if: ${{ matrix.type == 'ARM64' }}
+      run: make V=1 CC=$XCC QEMU_SYS=$XEMU
+
+    - name: ARM
+      if: ${{ matrix.type == 'ARM' }}
+      run: make V=1 CC=$XCC QEMU_SYS=$XEMU
+
+    - name: PPC
+      if: ${{ matrix.type == 'PPC' }}
+      run: make V=1 CC=$XCC QEMU_SYS=$XEMU
+
+    - name: PPC64LE
+      if: ${{ matrix.type == 'PPC64LE' }}
+      run: make V=1 CC=$XCC QEMU_SYS=$XEMU MOREFLAGS=-m64
+
+    - name: S390X
+      if: ${{ matrix.type == 'S390X' }}
+      run: make V=1 CC=$XCC QEMU_SYS=$XEMU
+
+
+  # macOS
+  mmc-platform-macos-latest:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Environment info
+      run: |
+        echo && type cc && which cc && cc --version
+        echo && type make && which make && make -v
+        echo && sysctl -a | grep machdep.cpu   # cpuinfo
+
+    - name: make default
+      run: CFLAGS="-Werror" make V=1 clean default
+
+
+############################################################
+# Gather CI environment information.
+#
+  mmc-env-info:
+    name: GH-Actions Virtual Env Info (${{ matrix.os }})
+    strategy:
+      matrix:
+        include: [
+          { os: ubuntu-latest,  }, # https://github.com/actions/virtual-environments/
+          { os: ubuntu-22.04,   }, # https://github.com/actions/virtual-environments/blob/main/images/linux/Ubuntu2204-Readme.md
+          { os: ubuntu-20.04,   }, # https://github.com/actions/virtual-environments/blob/main/images/linux/Ubuntu2004-Readme.md
+          { os: ubuntu-18.04,   }, # https://github.com/actions/virtual-environments/blob/main/images/linux/Ubuntu1804-Readme.md
+        ]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: init
+      run: |
+        sudo apt-get update
+
+    - name: cc --version
+      run: echo && type cc && which cc && cc --version
+
+    - name: gcc --version
+      run: echo && type gcc && which gcc && gcc --version
+
+    - name: clang --version
+      run: echo && type clang && which clang && clang --version
+
+    - name: make -v
+      run: echo && type make && which make && make -v
+
+    - name: g++ --version
+      run: echo && type g++ && which g++ && g++ --version
+
+    - name: git --version
+      run: echo && type git && which git && git --version
+
+    - name: gcc packages (apt-cache)
+      run: apt-cache search gcc | grep "^gcc-[0-9\.]* " | sort
+
+    - name: lib32gcc packages for i386 (apt-cache)
+      run: apt-cache search lib32gcc | grep "^lib32gcc-" | sort
+
+    - name: libx32gcc packages for x32 (apt-cache)
+      run: apt-cache search libx32gcc | grep "^libx32gcc-" | sort
+
+    - name: gcc multilib packages (apt-cache)
+      run: apt-cache search multilib | grep "gcc-" | sort
+
+    - name: clang packages (apt-cache)
+      run: apt-cache search clang | grep "^clang-[0-9\.]* " | sort
+
+    - name: QEMU packages (apt-cache)
+      run: apt-cache search qemu | grep "^qemu-system-.*QEMU full system" | sort
